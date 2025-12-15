@@ -381,7 +381,7 @@ def format_medical_report(report: Dict) -> str:
 def create_medical_interface():
     """Создать Gradio интерфейс."""
     
-    with gr.Blocks(title="Оценка общих движений (GMA) - Детектор аномалий", theme=gr.themes.Soft()) as interface:
+    with gr.Blocks(title="Оценка общих движений (GMA) - Детектор аномалий") as interface:
         gr.Markdown(
             """
             # 🍼 Оценка общих движений (General Movements Assessment)
@@ -529,6 +529,7 @@ if __name__ == "__main__":
             server_port=port,
             show_error=True,
             quiet=False,
+            theme=gr.themes.Soft()
         )
     except Exception as e:
         logger.error(f"Ошибка запуска сервера: {e}")
