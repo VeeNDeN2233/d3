@@ -160,7 +160,7 @@ class UserDatabase:
         Аутентификация пользователя.
         
         Args:
-            username: Имя пользователя
+            username: Имя пользователя или email
             password: Пароль
         
         Returns:
@@ -170,10 +170,11 @@ class UserDatabase:
         cursor = conn.cursor()
         
         try:
+            # Пытаемся найти пользователя по username или email
             cursor.execute("""
                 SELECT id, username, email, password_hash, full_name, role, is_active
-                FROM users WHERE username = ?
-            """, (username,))
+                FROM users WHERE username = ? OR email = ?
+            """, (username, username))
             
             user_data = cursor.fetchone()
             

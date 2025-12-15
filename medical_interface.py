@@ -20,6 +20,22 @@ warnings.filterwarnings("ignore", category=RuntimeWarning, module="asyncio")
 # Импорт системы аутентификации
 from auth.auth_manager import AuthManager
 
+# Импорт новых модулей архитектуры
+from core import (
+    AppState,
+    StateManager,
+    AnalysisStep,
+    AuthHandler,
+    VideoProcessor as CoreVideoProcessor,
+    StepManager,
+    AnalysisPipeline,
+)
+from core.state_manager import AnalysisParameters
+from utils.gradio_helpers import create_status_message, create_progress_html
+from utils.analysis_cache import AnalysisCache
+from utils.gradio_state_adapter import GradioStateAdapter
+import threading
+
 # Импорт оптимизаций
 from utils.model_cache import get_model_cache
 from utils.performance_optimizer import (
@@ -51,27 +67,62 @@ _config: Optional[dict] = None
 _video_processor: Optional[VideoProcessor] = None
 _pose_processor: Optional[PoseProcessor] = None
 
-# Менеджер аутентификации
+# Менеджер аутентификации (старый, для совместимости)
 _auth_manager = AuthManager()
 
+# Новые менеджеры архитектуры
+_state_manager = StateManager()
+_auth_handler = AuthHandler()
+_core_video_processor = CoreVideoProcessor()
+_analysis_pipeline: Optional[AnalysisPipeline] = None
+_cancel_event: Optional[threading.Event] = None
+_analysis_cache = AnalysisCache()
+_gradio_state_adapter = GradioStateAdapter(_state_manager)
+_step_manager = StepManager(_state_manager)
 
-@cache_result(max_size=1)
-def load_models(config_path: str = "config.yaml", checkpoint_path: str = "checkpoints/best_model_advanced.pt"):
-    """Загрузить модели один раз при старте с кэшированием."""
-    global _model, _detector, _config, _video_processor, _pose_processor
+# Флаг для lazy loading моделей
+_models_loading = False
+_model_loading_lock = threading.Lock()
+
+
+def load_models_lazy(config_path: str = "config.yaml", checkpoint_path: str = "checkpoints/best_model_advanced.pt", force: bool = False):
+    """
+    Lazy loading моделей - загружает только при необходимости.
     
-    if _model is not None:
-        return "Модели уже загружены"
+    Args:
+        config_path: Путь к конфигурации
+        checkpoint_path: Путь к checkpoint модели
+        force: Принудительная перезагрузка
+    
+    Returns:
+        Сообщение о статусе загрузки
+    """
+    global _model, _detector, _config, _video_processor, _pose_processor, _models_loading, _model_loading_lock
+    global _state_manager
+    
+    # Проверяем, не загружается ли уже
+    with _model_loading_lock:
+        if _models_loading:
+            return "Модели загружаются, пожалуйста, подождите..."
+        
+        if _model is not None and not force:
+            _state_manager.update_models(is_loaded=True, status_message="Модели уже загружены")
+            return "Модели уже загружены"
+        
+        _models_loading = True
     
     try:
+        _state_manager.update_models(is_loaded=False, status_message="Загрузка моделей...")
+        
         # Проверяем кэш моделей
         model_cache = get_model_cache()
         checkpoint = Path(checkpoint_path)
         
         cached = model_cache.get(checkpoint, "bidir_lstm")
-        if cached is not None:
+        if cached is not None and not force:
             _model, _detector = cached
             logger.info("Модели загружены из кэша")
+            _state_manager.update_models(is_loaded=True, status_message="Модели загружены из кэша")
         else:
             # Загружаем конфигурацию
             with open(config_path, "r", encoding="utf-8") as f:
@@ -80,9 +131,14 @@ def load_models(config_path: str = "config.yaml", checkpoint_path: str = "checkp
             # Проверяем GPU
             device = model_cache.get_device()
             if device.type != "cuda":
+                _state_manager.update_models(
+                    is_loaded=False,
+                    loading_error="GPU недоступен",
+                    status_message="Ошибка: GPU недоступен!"
+                )
                 return "Ошибка: GPU недоступен!"
             
-            # Загружаем модель и детектор (улучшенная модель по умолчанию)
+            # Загружаем модель и детектор
             _model, _detector = load_model_and_detector(checkpoint, _config, device, model_type="bidir_lstm")
             
             # Сохраняем в кэш
@@ -105,85 +161,94 @@ def load_models(config_path: str = "config.yaml", checkpoint_path: str = "checkp
             rotate_to_canonical=_config["pose"].get("rotate_to_canonical", False),
         )
         
-        return f"✅ Модели загружены успешно! (Bidirectional LSTM + Attention)\nGPU: {torch.cuda.get_device_name(0)}\nПорог: {_detector.threshold:.6f}"
+        status_msg = f"Модели загружены успешно. (Bidirectional LSTM + Attention)\nGPU: {torch.cuda.get_device_name(0)}\nПорог: {_detector.threshold:.6f}"
+        _state_manager.update_models(is_loaded=True, status_message=status_msg)
+        
+        return status_msg
+        
     except Exception as e:
         logger.error(f"Ошибка загрузки моделей: {e}", exc_info=True)
-        return f"❌ Ошибка загрузки: {str(e)}"
+        error_msg = f"Ошибка загрузки: {str(e)}"
+        _state_manager.update_models(
+            is_loaded=False,
+            loading_error=str(e),
+            status_message=error_msg
+        )
+        return error_msg
+    finally:
+        with _model_loading_lock:
+            _models_loading = False
 
 
-def analyze_baby_video(video_file, age_weeks=None, gestational_age_weeks=None, session_token_state=None) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+@cache_result(max_size=1)
+def load_models(config_path: str = "config.yaml", checkpoint_path: str = "checkpoints/best_model_advanced.pt"):
+    """Загрузить модели один раз при старте с кэшированием (старая функция для совместимости)."""
+    return load_models_lazy(config_path, checkpoint_path, force=False)
+
+
+def analyze_baby_video(
+    video_file,
+    age_weeks=None,
+    gestational_age_weeks=None,
+    session_token_state=None,
+    progress=gr.Progress()
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """
-    Основная функция анализа видео.
+    Основная функция анализа видео с поддержкой прогресса и кэширования.
     
     Args:
         video_file: Файл от Gradio File компонента
+        age_weeks: Возраст ребенка в неделях
+        gestational_age_weeks: Гестационный возраст
+        session_token_state: Токен сессии
+        progress: Объект прогресса Gradio
     
     Returns:
-        Tuple (anomaly_plot_path, report_json)
+        Tuple (anomaly_plot_path, video_path, report_text)
     """
     global _model, _detector, _config, _video_processor, _pose_processor, _auth_manager
+    global _core_video_processor, _analysis_cache, _cancel_event
     
     # Проверка аутентификации
     session_token = session_token_state if session_token_state else None
     auth_success, user_data, auth_message = _auth_manager.require_auth(session_token)
     
     if not auth_success:
-        return None, None, f"❌ {auth_message}\n\nПожалуйста, войдите в систему на вкладке '🔐 Вход/Регистрация'."
+        return None, None, f"Ошибка: {auth_message}\n\nПожалуйста, войдите в систему."
     
     if _model is None or _detector is None:
-        return None, None, "❌ Ошибка: Модели не загружены!\n\nНажмите 'Загрузить модели' для инициализации системы."
+        return None, None, "Ошибка: Модели не загружены!\n\nСистема инициализируется, пожалуйста, подождите."
     
     try:
         if video_file is None:
-            return None, None, "❌ Ошибка: Видео не загружено!\n\nПожалуйста, загрузите видео файл перед анализом."
+            return None, None, "Ошибка: Видео не загружено!\n\nПожалуйста, загрузите видео файл перед анализом."
         
-        # Обработка разных типов входных данных от Gradio
-        logger.info(f"Получен video_file типа: {type(video_file)}")
+        # Используем новый VideoProcessor для обработки файла
+        progress(0.05, desc="Обработка файла...")
+        actual_path = _core_video_processor.get_video_path(video_file)
         
-        # Gradio File может вернуть:
-        # 1. Объект File с атрибутом .name
-        # 2. Строку с путем
-        # 3. Список файлов
-        # 4. None
+        if actual_path is None:
+            return None, None, "Ошибка: Не удалось определить путь к файлу.\n\nПопробуйте загрузить видео снова."
         
-        actual_path = None
+        # Валидация файла
+        is_valid, error_msg = _core_video_processor.validate_video(actual_path)
+        if not is_valid:
+            return None, None, f"Ошибка валидации видео: {error_msg}"
         
-        # Если это список
-        if isinstance(video_file, list):
-            if len(video_file) > 0:
-                video_file = video_file[0]
-            else:
-                return None, None, "❌ Ошибка: Список файлов пуст!"
+        # Проверка кэша
+        progress(0.1, desc="Проверка кэша...")
+        age_weeks = age_weeks or 12
+        gestational_age_weeks = gestational_age_weeks or 40
         
-        # Получаем путь к файлу
-        if hasattr(video_file, 'name'):
-            # Объект File от Gradio
-            actual_path = video_file.name
-            logger.info(f"Файл из объекта File: {actual_path}")
-        elif isinstance(video_file, str):
-            # Строка с путем
-            actual_path = video_file.strip()
-            logger.info(f"Файл из строки: {actual_path}")
-        elif video_file is not None:
-            # Попытка преобразовать в строку
-            actual_path = str(video_file).strip()
-            logger.info(f"Файл преобразован в строку: {actual_path}")
-        
-        if not actual_path or actual_path == "None":
-            return None, None, "❌ Ошибка: Не удалось определить путь к файлу!\n\nПопробуйте загрузить видео снова."
-        
-        # Нормализуем путь (исправляем обратные слэши на Windows)
-        actual_path = Path(actual_path).resolve()
-        logger.info(f"Обработка файла: {actual_path}")
-        
-        # Проверяем существование файла
-        if not actual_path.exists():
-            logger.error(f"Файл не существует: {actual_path}")
-            return None, None, f"❌ Ошибка: Файл не найден!\n\nПуть: {actual_path}\n\nПопробуйте загрузить видео снова."
-        
-        if not actual_path.is_file():
-            logger.error(f"Путь не является файлом: {actual_path}")
-            return None, None, f"❌ Ошибка: Указанный путь не является файлом!\n\nПуть: {actual_path}"
+        cached_results = _analysis_cache.get(actual_path, age_weeks, gestational_age_weeks)
+        if cached_results:
+            logger.info("Используются результаты из кэша")
+            progress(1.0, desc="Результаты загружены из кэша")
+            return (
+                cached_results.get('plot_path'),
+                cached_results.get('video_path'),
+                cached_results.get('report_text')
+            )
         
         # Обработка видео
         # Сохраняем путь к исходному видео для создания видео с скелетом
@@ -225,7 +290,14 @@ def analyze_baby_video(video_file, age_weeks=None, gestational_age_weeks=None, s
             traceback.print_exc()
             skeleton_video_path = None
         
-        # Генерация медицинского отчета с детальным анализом
+        # Проверка отмены перед генерацией отчета
+        if _cancel_event and _cancel_event.is_set():
+            _state_manager.update_analysis(is_cancelled=True, is_running=False)
+            return None, None, "Анализ отменен пользователем"
+        
+        # Генерация медицинского отчета
+        progress(0.8, desc="Генерация медицинского отчета...")
+        _state_manager.update_analysis(progress=0.8, current_step="Генерация медицинского отчета")
         report = generate_medical_report(
             actual_path, errors, is_anomaly, _detector, output_dir,
             age_weeks=age_weeks, gestational_age_weeks=gestational_age_weeks,
@@ -235,8 +307,16 @@ def analyze_baby_video(video_file, age_weeks=None, gestational_age_weeks=None, s
         # Пути к результатам
         plot_path = output_dir / "reconstruction_error.png"
         
-        # Форматирование отчета для отображения
+        # Форматирование отчета
         report_text = format_medical_report(report)
+        
+        # Сохраняем результаты в состояние
+        _state_manager.update_analysis(
+            results={
+                'plot_path': str(plot_path.resolve()) if plot_path.exists() else None,
+                'report_text': report_text,
+            }
+        )
         
         # Возвращаем путь к графику, видео с скелетом и отчет
         # Для Gradio Video нужно использовать абсолютный путь
@@ -255,7 +335,7 @@ def analyze_baby_video(video_file, age_weeks=None, gestational_age_weeks=None, s
                         try:
                             with open(abs_path, 'rb') as f:
                                 f.read(1024)  # Читаем первые 1024 байта для проверки
-                            logger.info(f"✅ Видео готово для отображения: {video_path_for_gradio} ({file_size / 1024 / 1024:.2f} MB)")
+                            logger.info(f"Видео готово для отображения: {video_path_for_gradio} ({file_size / 1024 / 1024:.2f} MB)")
                         except Exception as e:
                             logger.error(f"❌ Не удалось прочитать видео файл: {e}")
                             video_path_for_gradio = None
@@ -283,12 +363,34 @@ def analyze_baby_video(video_file, age_weeks=None, gestational_age_weeks=None, s
                     logger.error(f"Не удалось использовать исходное видео: {e}")
         
         # Очистка памяти после обработки
+        progress(0.95, desc="Очистка памяти...")
+        _state_manager.update_analysis(progress=0.95, current_step="Очистка памяти")
         optimize_memory()
         
+        # Подготовка результатов для кэширования
+        results = {
+            'plot_path': str(plot_path.resolve()) if plot_path.exists() else None,
+            'video_path': video_path_for_gradio,
+            'report_text': report_text
+        }
+        
+        # Сохранение в кэш
+        _analysis_cache.set(actual_path, age_weeks, gestational_age_weeks, results)
+        
+        # Обновляем состояние анализа
+        _state_manager.update_analysis(
+            is_running=False,
+            progress=1.0,
+            current_step="Анализ завершен",
+            results=results
+        )
+        
+        progress(1.0, desc="Анализ завершен")
+        
         return (
-            str(plot_path.resolve()) if plot_path.exists() else None,
-            video_path_for_gradio,
-            report_text
+            results['plot_path'],
+            results['video_path'],
+            results['report_text']
         )
     except Exception as e:
         logger.error(f"Ошибка анализа: {e}", exc_info=True)
@@ -497,353 +599,1385 @@ def format_medical_report(report: Dict) -> str:
 
 
 def create_medical_interface():
-    """Создать многостраничное Gradio приложение."""
+    """Создать клинический процедурный интерфейс для анализа движений младенцев."""
+    
+    # Клинический CSS для медицинского интерфейса
+    custom_css = """
+    /* Базовые стили */
+    * {
+        box-sizing: border-box !important;
+    }
+    
+    .gradio-container {
+        background: #f5f7fa !important;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif !important;
+        color: #2c3e50 !important;
+        min-height: 100vh !important;
+        display: flex !important;
+        flex-direction: column !important;
+    }
+    
+    /* Основной контент */
+    .main {
+        background: transparent !important;
+        flex: 1 !important;
+        display: flex !important;
+        flex-direction: column !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        padding: 0 !important;
+        margin: 0 !important;
+    }
+    
+    /* Контейнер для контента */
+    .container {
+        max-width: 1200px !important;
+        width: 100% !important;
+        margin: 0 auto !important;
+        padding: 40px 24px !important;
+        display: flex !important;
+        flex-direction: column !important;
+    }
+    
+    /* Форма входа - центрированная */
+    .login-form-container {
+        width: 100% !important;
+        max-width: 420px !important;
+        margin: 0 auto !important;
+        display: flex !important;
+        flex-direction: column !important;
+    }
+    
+    /* Группа формы */
+    .gr-group {
+        background: #ffffff !important;
+        border: 1px solid #e2e8f0 !important;
+        border-radius: 8px !important;
+        padding: 32px !important;
+        margin: 0 0 24px 0 !important;
+        display: flex !important;
+        flex-direction: column !important;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
+    }
+    
+    /* Верхняя панель */
+    .header-panel {
+        background: #ffffff !important;
+        border-bottom: 1px solid #e1e8ed !important;
+        padding: 20px 24px !important;
+        margin: 0 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        flex-shrink: 0 !important;
+    }
+    
+    .header-panel > div {
+        max-width: 1200px !important;
+        width: 100% !important;
+        margin: 0 auto !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+    }
+    
+    /* Заголовки - клинический стиль */
+    h1 {
+        color: #1a202c !important;
+        font-weight: 600 !important;
+        font-size: 24px !important;
+        letter-spacing: -0.3px !important;
+        margin: 0 !important;
+        line-height: 1.3 !important;
+    }
+    
+    h2 {
+        color: #2d3748 !important;
+        font-weight: 600 !important;
+        font-size: 20px !important;
+        margin: 0 0 12px 0 !important;
+        line-height: 1.4 !important;
+    }
+    
+    h3 {
+        color: #2d3748 !important;
+        font-weight: 600 !important;
+        font-size: 16px !important;
+        margin: 0 0 16px 0 !important;
+        line-height: 1.4 !important;
+    }
+    
+    p {
+        margin: 0 0 16px 0 !important;
+        line-height: 1.6 !important;
+    }
+    
+    h4 {
+        color: #4a5568 !important;
+        font-weight: 500 !important;
+        font-size: 14px !important;
+        margin: 0 0 8px 0 !important;
+    }
+    
+    /* Кнопки - клинический стиль */
+    button.primary {
+        background: #4a90e2 !important;
+        border: none !important;
+        border-radius: 4px !important;
+        padding: 12px 32px !important;
+        font-weight: 500 !important;
+        font-size: 15px !important;
+        transition: background 0.2s ease !important;
+        color: white !important;
+        cursor: pointer !important;
+    }
+    
+    button.primary:hover:not(:disabled) {
+        background: #357abd !important;
+    }
+    
+    button.primary:disabled {
+        background: #cbd5e0 !important;
+        cursor: not-allowed !important;
+        color: #a0aec0 !important;
+    }
+    
+    button.secondary {
+        background: #718096 !important;
+        border: none !important;
+        border-radius: 4px !important;
+        padding: 10px 20px !important;
+        font-weight: 500 !important;
+        font-size: 14px !important;
+        color: white !important;
+        transition: background 0.2s ease !important;
+    }
+    
+    button.secondary:hover {
+        background: #4a5568 !important;
+    }
+    
+    button.stop {
+        background: #e53e3e !important;
+        border: none !important;
+        border-radius: 4px !important;
+        padding: 8px 16px !important;
+        font-weight: 500 !important;
+        font-size: 14px !important;
+        color: white !important;
+        transition: background 0.2s ease !important;
+    }
+    
+    button.stop:hover {
+        background: #c53030 !important;
+    }
+    
+    /* Поля ввода - клинический стиль */
+    input[type="text"], input[type="password"], input[type="number"], input[type="email"] {
+        background: #ffffff !important;
+        border: 1px solid #cbd5e0 !important;
+        border-radius: 6px !important;
+        padding: 10px 14px !important;
+        font-size: 14px !important;
+        transition: border-color 0.2s ease !important;
+        color: #2d3748 !important;
+        font-family: inherit !important;
+        margin: 0 !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
+        display: block !important;
+        height: 42px !important;
+        line-height: 1.5 !important;
+    }
+    
+    /* Принудительно делаем textarea однострочными для полей входа */
+    .gr-textbox textarea {
+        height: 42px !important;
+        min-height: 42px !important;
+        max-height: 42px !important;
+        resize: none !important;
+        overflow: hidden !important;
+        line-height: 22px !important;
+        padding: 10px 14px !important;
+        white-space: nowrap !important;
+    }
+    
+    /* Скрываем полосы прокрутки и resize handle */
+    .gr-textbox textarea::-webkit-scrollbar {
+        display: none !important;
+        width: 0 !important;
+        height: 0 !important;
+    }
+    
+    .gr-textbox textarea {
+        -ms-overflow-style: none !important;
+        scrollbar-width: none !important;
+    }
+    
+    /* Убираем resize handle */
+    .gr-textbox textarea::-webkit-resizer {
+        display: none !important;
+    }
+    
+    /* Для полей входа и регистрации - строго однострочные */
+    .gr-group .gr-textbox textarea {
+        height: 42px !important;
+        min-height: 42px !important;
+        max-height: 42px !important;
+        resize: none !important;
+        overflow: hidden !important;
+        line-height: 22px !important;
+        padding: 10px 14px !important;
+    }
+    
+    textarea {
+        background: #ffffff !important;
+        border: 1px solid #cbd5e0 !important;
+        border-radius: 6px !important;
+        padding: 10px 14px !important;
+        font-size: 14px !important;
+        transition: border-color 0.2s ease !important;
+        color: #2d3748 !important;
+        font-family: inherit !important;
+        margin: 0 !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
+        resize: vertical !important;
+        min-height: 42px !important;
+        line-height: 1.5 !important;
+    }
+    
+    /* Контейнеры для полей ввода */
+    .gr-textbox,
+    .gr-number {
+        display: flex !important;
+        flex-direction: column !important;
+        width: 100% !important;
+        margin-bottom: 20px !important;
+    }
+    
+    .gr-textbox:last-child,
+    .gr-number:last-child {
+        margin-bottom: 0 !important;
+    }
+    
+    .gr-textbox label,
+    .gr-number label {
+        margin-bottom: 6px !important;
+    }
+    
+    .gr-textbox input,
+    .gr-textbox textarea,
+    .gr-number input {
+        margin: 0 !important;
+    }
+    
+    input[type="text"]:focus, input[type="password"]:focus, input[type="number"]:focus, textarea:focus {
+        border-color: #4a90e2 !important;
+        box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.1) !important;
+        outline: none !important;
+    }
+    
+    input[type="text"]:disabled, input[type="number"]:disabled, textarea:disabled {
+        background: #f7fafc !important;
+        color: #a0aec0 !important;
+        cursor: not-allowed !important;
+    }
+    
+    /* Лейблы */
+    label {
+        font-weight: 500 !important;
+        font-size: 14px !important;
+        color: #4a5568 !important;
+        margin-bottom: 8px !important;
+        display: block !important;
+        line-height: 1.5 !important;
+        background: transparent !important;
+        padding: 0 !important;
+    }
+    
+    /* Убираем цветные фоны с лейблов Gradio */
+    .gr-textbox > label,
+    .gr-number > label,
+    .gr-textbox label,
+    .gr-number label {
+        background: transparent !important;
+        background-color: transparent !important;
+        color: #4a5568 !important;
+        padding: 0 !important;
+        border: none !important;
+        border-radius: 0 !important;
+    }
+    
+    /* Убираем все декоративные элементы с лейблов */
+    label span,
+    .gr-textbox label span {
+        background: transparent !important;
+        background-color: transparent !important;
+    }
+    
+    /* Карточки */
+    .card {
+        background: #ffffff !important;
+        border-radius: 12px !important;
+        padding: 20px !important;
+        margin: 16px 0 !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06) !important;
+        border: 1px solid #e8e8e8 !important;
+    }
+    
+    /* Stepper / Wizard - пошаговый процесс */
+    .stepper {
+        display: flex !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+        margin: 0 0 32px 0 !important;
+        padding: 24px 32px !important;
+        background: #ffffff !important;
+        border-bottom: 1px solid #e2e8f0 !important;
+        position: relative !important;
+        flex-shrink: 0 !important;
+    }
+    
+    .stepper::before {
+        content: '' !important;
+        position: absolute !important;
+        top: 20px !important;
+        left: 24px !important;
+        right: 24px !important;
+        height: 2px !important;
+        background: #e2e8f0 !important;
+        z-index: 0 !important;
+    }
+    
+    .step {
+        position: relative !important;
+        z-index: 1 !important;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: center !important;
+        flex: 1 !important;
+    }
+    
+    .step-circle {
+        width: 40px !important;
+        height: 40px !important;
+        border-radius: 50% !important;
+        background: #ffffff !important;
+        border: 2px solid #e2e8f0 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        font-weight: 600 !important;
+        font-size: 14px !important;
+        color: #a0aec0 !important;
+        margin-bottom: 8px !important;
+    }
+    
+    .step.active .step-circle {
+        background: #4a90e2 !important;
+        border-color: #4a90e2 !important;
+        color: #ffffff !important;
+    }
+    
+    .step.completed .step-circle {
+        background: #48bb78 !important;
+        border-color: #48bb78 !important;
+        color: #ffffff !important;
+    }
+    
+    .step-label {
+        font-size: 12px !important;
+        color: #718096 !important;
+        text-align: center !important;
+        font-weight: 500 !important;
+    }
+    
+    .step.active .step-label {
+        color: #2d3748 !important;
+        font-weight: 600 !important;
+    }
+    
+    /* Шаги процесса */
+    .step-panel {
+        background: #ffffff !important;
+        border: 1px solid #e2e8f0 !important;
+        border-radius: 8px !important;
+        padding: 32px !important;
+        margin: 0 0 24px 0 !important;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
+        display: flex !important;
+        flex-direction: column !important;
+        width: 100% !important;
+    }
+    
+    .step-panel.disabled {
+        opacity: 0.6 !important;
+        pointer-events: none !important;
+    }
+    
+    .step-panel.active {
+        border-color: #4a90e2 !important;
+        box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.1), 0 2px 8px rgba(0, 0, 0, 0.08) !important;
+    }
+    
+    /* Группы элементов внутри панелей */
+    .step-panel > * {
+        margin-bottom: 24px !important;
+        flex-shrink: 0 !important;
+    }
+    
+    .step-panel > *:last-child {
+        margin-bottom: 0 !important;
+    }
+    
+    /* Группа формы входа */
+    .gr-group {
+        display: flex !important;
+        flex-direction: column !important;
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 32px !important;
+        background: #ffffff !important;
+        border: 1px solid #e2e8f0 !important;
+        border-radius: 8px !important;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
+    }
+    
+    .gr-group > * {
+        margin-bottom: 20px !important;
+    }
+    
+    .gr-group > *:last-child {
+        margin-bottom: 0 !important;
+    }
+    
+    /* Row и Column на flexbox */
+    .gr-row {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        margin: 0 -12px 24px -12px !important;
+        width: calc(100% + 24px) !important;
+    }
+    
+    .gr-row:last-child {
+        margin-bottom: 0 !important;
+    }
+    
+    .gr-column {
+        flex: 1 1 0 !important;
+        min-width: 0 !important;
+        padding: 0 12px !important;
+        display: flex !important;
+        flex-direction: column !important;
+    }
+    
+    .gr-column[scale="1"] {
+        flex: 0 0 auto !important;
+    }
+    
+    .gr-column[scale="2"] {
+        flex: 2 1 0 !important;
+    }
+    
+    .gr-column[scale="3"] {
+        flex: 3 1 0 !important;
+    }
+    
+    /* Файловый загрузчик - клинический стиль */
+    .file-upload {
+        background: #f7fafc !important;
+        border: 2px dashed #cbd5e0 !important;
+        border-radius: 8px !important;
+        padding: 64px 32px !important;
+        text-align: center !important;
+        transition: all 0.2s ease !important;
+        min-height: 240px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: center !important;
+        justify-content: center !important;
+        margin: 24px 0 !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
+    }
+    
+    .file-upload:hover {
+        border-color: #4a90e2 !important;
+        background: #edf2f7 !important;
+    }
+    
+    .file-upload.has-file {
+        border-color: #48bb78 !important;
+        background: #f0fff4 !important;
+        border-style: solid !important;
+    }
+    
+    /* Видео и изображения */
+    video, img {
+        border-radius: 8px !important;
+        border: 1px solid #e2e8f0 !important;
+        background: #f7fafc !important;
+        margin: 0 !important;
+        display: block !important;
+        max-width: 100% !important;
+        height: auto !important;
+    }
+    
+    /* Контейнеры для видео и изображений */
+    .gr-video,
+    .gr-image {
+        display: flex !important;
+        flex-direction: column !important;
+        width: 100% !important;
+        margin-bottom: 24px !important;
+    }
+    
+    .gr-video:last-child,
+    .gr-image:last-child {
+        margin-bottom: 0 !important;
+    }
+    
+    .gr-video video,
+    .gr-image img {
+        width: 100% !important;
+        height: auto !important;
+        object-fit: contain !important;
+    }
+    
+    /* Разделители */
+    hr {
+        border: none !important;
+        border-top: 1px solid #e2e8f0 !important;
+        margin: 32px 0 !important;
+    }
+    
+    /* Кнопки */
+    button {
+        margin: 0 !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        white-space: nowrap !important;
+    }
+    
+    .gr-button {
+        margin: 16px 0 !important;
+        display: flex !important;
+        width: auto !important;
+    }
+    
+    /* Textbox и другие компоненты */
+    textarea {
+        min-height: 120px !important;
+        resize: vertical !important;
+    }
+    
+    /* Группы компонентов */
+    .gr-group {
+        display: flex !important;
+        flex-direction: column !important;
+        margin-bottom: 24px !important;
+        padding: 0 !important;
+        width: 100% !important;
+    }
+    
+    .gr-group:last-child {
+        margin-bottom: 0 !important;
+    }
+    
+    /* Статусные сообщения */
+    .status-info {
+        background: #ebf8ff !important;
+        border-left: 4px solid #4a90e2 !important;
+        padding: 16px 20px !important;
+        border-radius: 6px !important;
+        margin: 24px 0 !important;
+        font-size: 14px !important;
+        color: #2c5282 !important;
+        line-height: 1.6 !important;
+    }
+    
+    .status-success {
+        background: #f0fff4 !important;
+        border-left: 4px solid #48bb78 !important;
+        padding: 16px 20px !important;
+        border-radius: 6px !important;
+        margin: 24px 0 !important;
+        font-size: 14px !important;
+        color: #22543d !important;
+        line-height: 1.6 !important;
+    }
+    
+    .status-error {
+        background: #fff5f5 !important;
+        border-left: 4px solid #e53e3e !important;
+        padding: 16px 20px !important;
+        border-radius: 6px !important;
+        margin: 24px 0 !important;
+        font-size: 14px !important;
+        color: #742a2a !important;
+        line-height: 1.6 !important;
+    }
+    
+    .status-warning {
+        background: #fffbeb !important;
+        border-left: 4px solid #ed8936 !important;
+        padding: 16px 20px !important;
+        border-radius: 6px !important;
+        margin: 24px 0 !important;
+        font-size: 14px !important;
+        color: #7c2d12 !important;
+        line-height: 1.6 !important;
+    }
+    
+    /* Placeholder для пустых состояний */
+    .empty-state {
+        text-align: center !important;
+        padding: 48px 24px !important;
+        color: #718096 !important;
+        font-size: 14px !important;
+    }
+    
+    .empty-state-title {
+        font-size: 16px !important;
+        font-weight: 600 !important;
+        color: #4a5568 !important;
+        margin-bottom: 8px !important;
+    }
+    
+    /* Информация о пользователе */
+    .user-info {
+        background: #f7fafc !important;
+        border-radius: 4px !important;
+        padding: 12px 16px !important;
+        border: 1px solid #e2e8f0 !important;
+        font-size: 13px !important;
+        color: #4a5568 !important;
+    }
+    
+    /* Результаты анализа */
+    .results-panel {
+        background: #ffffff !important;
+        border: 1px solid #e2e8f0 !important;
+        border-radius: 8px !important;
+        padding: 32px !important;
+        margin: 32px 0 !important;
+    }
+    
+    /* Markdown блоки */
+    .gr-markdown {
+        margin: 0 0 24px 0 !important;
+        display: block !important;
+        width: 100% !important;
+    }
+    
+    .gr-markdown:last-child {
+        margin-bottom: 0 !important;
+    }
+    
+    .gr-markdown p {
+        margin-bottom: 12px !important;
+        line-height: 1.6 !important;
+    }
+    
+    .gr-markdown p:last-child {
+        margin-bottom: 0 !important;
+    }
+    
+    .gr-markdown ul,
+    .gr-markdown ol {
+        margin: 8px 0 !important;
+        padding-left: 24px !important;
+    }
+    
+    .gr-markdown li {
+        margin-bottom: 4px !important;
+        line-height: 1.6 !important;
+    }
+    
+    /* Адаптивность */
+    @media (max-width: 768px) {
+        .container {
+            padding: 24px 16px !important;
+        }
+        
+        .header-panel {
+            padding: 16px !important;
+        }
+        
+        .header-panel > div {
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            gap: 12px !important;
+        }
+        
+        .stepper {
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            padding: 20px 16px !important;
+        }
+        
+        .stepper::before {
+            display: none !important;
+        }
+        
+        .step {
+            flex-direction: row !important;
+            width: 100% !important;
+            margin-bottom: 16px !important;
+            align-items: center !important;
+        }
+        
+        .step-circle {
+            margin-right: 12px !important;
+            margin-bottom: 0 !important;
+        }
+        
+        .step-panel {
+            padding: 24px 16px !important;
+        }
+        
+        .gr-row {
+            flex-direction: column !important;
+            margin: 0 0 20px 0 !important;
+            width: 100% !important;
+        }
+        
+        .gr-column {
+            width: 100% !important;
+            padding: 0 !important;
+            margin-bottom: 16px !important;
+        }
+        
+        .gr-column:last-child {
+            margin-bottom: 0 !important;
+        }
+        
+        .file-upload {
+            padding: 40px 20px !important;
+            min-height: 180px !important;
+        }
+    }
+    """
     
     with gr.Blocks(title="GMA - Оценка общих движений") as interface:
-        # Заголовок
-        gr.Markdown(
-            """
-            <div style="text-align: center; padding: 20px;">
-                <h1 style="margin-bottom: 10px;">🍼 General Movements Assessment</h1>
-                <p style="color: #666; font-size: 16px;">Автоматизированная система для раннего выявления риска двигательных нарушений</p>
-            </div>
-            """
+        # Верхняя панель - только на главной странице (БЕЗ кнопки входа!)
+        # Header показывается только когда main_page видна и содержит только email + кнопку выхода
+        header_info = gr.Markdown(
+            value="",
+            visible=False,
         )
+        
+        # Скрытая кнопка выхода (активируется через JavaScript из header)
+        logout_btn = gr.Button("Выйти", variant="stop", visible=False, elem_id="header-logout-btn")
         
         # Хранилище состояния
         session_token_storage = gr.State(value=None)
         is_authenticated = gr.State(value=False)
         current_user_data = gr.State(value=None)
         
-        # СТРАНИЦА 1: ВХОД/РЕГИСТРАЦИЯ (всегда видна)
+        # СТРАНИЦА 1: ВХОД В СИСТЕМУ (всегда видна)
         with gr.Column(visible=True) as login_page:
-            gr.Markdown("## 🔐 Авторизация")
-            gr.Markdown("Для доступа к системе анализа необходимо войти в систему или зарегистрироваться.")
+            gr.Markdown(
+                """
+                <div style="max-width: 420px; margin: 60px auto; padding: 0 24px;">
+                """
+            )
             
-            with gr.Row():
-                # Левая колонка: Вход
-                with gr.Column(scale=1):
-                    gr.Markdown("### 🔑 Вход в систему")
-                    login_username = gr.Textbox(
-                        label="Имя пользователя",
-                        placeholder="Введите имя пользователя",
-                    )
-                    login_password = gr.Textbox(
-                        label="Пароль",
-                        type="password",
-                        placeholder="Введите пароль",
-                    )
-                    login_btn = gr.Button("Войти", variant="primary")
-                    login_status = gr.Markdown(visible=True, value="")
+            # Заголовок
+            gr.Markdown(
+                """
+                <div style="text-align: center; margin-bottom: 32px;">
+                    <h2 style="color: #1a202c; margin: 0 0 8px 0; font-size: 24px; font-weight: 600; line-height: 1.3;">Доступ к системе анализа движений</h2>
+                    <p style="color: #718096; font-size: 14px; margin: 0; line-height: 1.5;">Вход для зарегистрированных специалистов</p>
+                </div>
+                """
+            )
+            
+            # Форма входа
+            with gr.Group():
+                login_email = gr.Textbox(
+                    label="Email",
+                    placeholder="your.email@example.com",
+                    container=True,
+                    lines=1,
+                    max_lines=1,
+                )
+                login_password = gr.Textbox(
+                    label="Пароль",
+                    type="password",
+                    placeholder="Введите пароль",
+                    container=True,
+                    lines=1,
+                    max_lines=1,
+                )
                 
-                # Правая колонка: Регистрация
-                with gr.Column(scale=1):
-                    gr.Markdown("### 📝 Регистрация")
-                    reg_username = gr.Textbox(
-                        label="Имя пользователя",
-                        placeholder="Минимум 3 символа",
+                login_btn = gr.Button(
+                    "Войти в систему",
+                    variant="primary",
+                    size="lg",
+                )
+                
+                login_status = gr.Markdown(
+                    visible=True,
+                    value="",
+                    elem_classes=["status-message"],
+                )
+            
+            # Дополнительные ссылки
+            with gr.Row():
+                show_register_btn = gr.Button(
+                    "Зарегистрироваться",
+                    variant="secondary",
+                    size="sm",
+                    scale=0,
+                )
+            
+            gr.Markdown(
+                """
+                <div style="text-align: center; margin-top: 16px;">
+                    <p style="margin: 0; font-size: 13px; color: #718096;">
+                        Нет учетной записи?
+                    </p>
+                </div>
+                """
+            )
+            
+            gr.Markdown("</div></div>")  # Закрываем контейнеры
+            
+            # Скрытая форма регистрации (отдельный экран)
+            with gr.Column(visible=False) as register_page:
+                gr.Markdown(
+                    """
+                    <div style="max-width: 420px; margin: 60px auto; padding: 0 24px;">
+                    """
+                )
+                
+                # Заголовок регистрации
+                gr.Markdown(
+                    """
+                    <div style="text-align: center; margin-bottom: 32px;">
+                        <h2 style="color: #1a202c; margin: 0 0 8px 0; font-size: 24px; font-weight: 600; line-height: 1.3;">Регистрация в системе</h2>
+                        <p style="color: #718096; font-size: 14px; margin: 0; line-height: 1.5;">Создание учетной записи для доступа к системе анализа</p>
+                    </div>
+                    """
+                )
+                
+                # Форма регистрации
+                with gr.Group():
+                    reg_email = gr.Textbox(
+                        label="Email",
+                        placeholder="your.email@example.com",
+                        container=True,
+                        lines=1,
+                        max_lines=1,
+                    )
+                    reg_full_name = gr.Textbox(
+                        label="Полное имя",
+                        placeholder="Иван Иванов",
+                        container=True,
+                        lines=1,
+                        max_lines=1,
                     )
                     reg_password = gr.Textbox(
                         label="Пароль",
                         type="password",
                         placeholder="Минимум 6 символов",
+                        container=True,
+                        lines=1,
+                        max_lines=1,
                     )
                     reg_password_confirm = gr.Textbox(
                         label="Подтверждение пароля",
                         type="password",
                         placeholder="Повторите пароль",
+                        container=True,
+                        lines=1,
+                        max_lines=1,
                     )
-                    reg_email = gr.Textbox(
-                        label="Email (опционально)",
-                        placeholder="your@email.com",
+                    
+                    register_btn = gr.Button(
+                        "Зарегистрироваться",
+                        variant="primary",
+                        size="lg",
+                        scale=1,
                     )
-                    reg_full_name = gr.Textbox(
-                        label="Полное имя (опционально)",
-                        placeholder="Иван Иванов",
+                    
+                    reg_status = gr.Markdown(
+                        visible=True,
+                        value="",
+                        elem_classes=["status-message"],
                     )
-                    register_btn = gr.Button("Зарегистрироваться", variant="secondary")
-                    reg_status = gr.Markdown(visible=True, value="")
+                
+                # Ссылка возврата
+                with gr.Row():
+                    show_login_btn = gr.Button(
+                        "Войти",
+                        variant="secondary",
+                        size="sm",
+                        scale=0,
+                    )
+                
+                gr.Markdown(
+                    """
+                    <div style="text-align: center; margin-top: 16px;">
+                        <p style="margin: 0; font-size: 13px; color: #718096;">
+                            Уже есть учетная запись?
+                        </p>
+                    </div>
+                    """
+                )
+                
+                gr.Markdown("</div></div>")  # Закрываем контейнеры
         
         # СТРАНИЦА 2: ГЛАВНАЯ СТРАНИЦА С ФУНКЦИЯМИ (только для авторизованных)
         with gr.Column(visible=False) as main_page:
-            # Информация о пользователе и выход
-            with gr.Row():
-                with gr.Column(scale=3):
-                    current_user_info = gr.Markdown(
-                        value="### 👤 Текущий пользователь\n\n*Загрузка...*",
+            gr.Markdown(
+                """
+                <div class="container">
+                """
+            )
+            
+            # Состояния для управления шагами (синхронизируются с StateManager через StepManager)
+            def get_current_step():
+                state = _state_manager.get_state()
+                step_mapping = {
+                    AnalysisStep.UPLOAD: 1,
+                    AnalysisStep.PARAMETERS: 2,
+                    AnalysisStep.ANALYSIS: 3,
+                    AnalysisStep.RESULTS: 4,
+                }
+                return step_mapping.get(state.current_step, 1)
+            def get_video_uploaded():
+                return _state_manager.get_state().video.is_uploaded
+            
+            current_step = gr.State(value=get_current_step)
+            video_uploaded = gr.State(value=get_video_uploaded)
+            
+            # Stepper - индикатор шагов
+            stepper_html = gr.Markdown(
+                value="""
+                <div class="stepper">
+                    <div class="step active" id="step-1">
+                        <div class="step-circle">1</div>
+                        <div class="step-label">Загрузка видео</div>
+                    </div>
+                    <div class="step" id="step-2">
+                        <div class="step-circle">2</div>
+                        <div class="step-label">Параметры</div>
+                    </div>
+                    <div class="step" id="step-3">
+                        <div class="step-circle">3</div>
+                        <div class="step-label">Анализ</div>
+                    </div>
+                    <div class="step" id="step-4">
+                        <div class="step-circle">4</div>
+                        <div class="step-label">Результаты</div>
+                    </div>
+                </div>
+                """
+            )
+            
+            # ШАГ 1: Загрузка видео
+            with gr.Group(visible=True, elem_classes=["step-panel", "active"]) as step1_panel:
+                gr.Markdown(
+                    """
+                    <h2 style="margin-bottom: 12px;">Шаг 1: Загрузка видео</h2>
+                    <p style="color: #718096; font-size: 14px; margin-bottom: 24px; line-height: 1.6;">
+                        Загрузите видео младенца для анализа движений. Видео должно соответствовать требованиям съемки для GMA.
+                    </p>
+                    """
+                )
+                
+                video_input = gr.File(
+                    label="Видео для анализа",
+                    file_types=[".mp4", ".avi", ".mov", ".mkv", ".webm"],
+                    file_count="single",
+                    height=200,
+                )
+                
+                gr.Markdown(
+                    """
+                    <div class="status-info" style="margin-top: 24px;">
+                        <strong style="display: block; margin-bottom: 8px;">Требования к видео:</strong>
+                        <ul style="margin: 0; padding-left: 20px; line-height: 1.8;">
+                            <li>Формат: MP4, AVI, MOV, MKV, WebM</li>
+                            <li>Длительность: 1-3 минуты</li>
+                            <li>Положение камеры: сверху, видны руки и ноги</li>
+                            <li>Ребенок: лежит на спине, спокоен, легко одет</li>
+                        </ul>
+                    </div>
+                    """
+                )
+                
+                video_status = gr.Markdown(
+                    value="<div class='empty-state'><div class='empty-state-title'>Видео не загружено</div><p>Перетащите файл в область выше или нажмите для выбора</p></div>",
+                    visible=True
+                )
+                
+                # Кнопка перехода к следующему шагу
+                next_to_step2_btn = gr.Button(
+                    "Далее",
+                    variant="primary",
+                    size="lg",
+                    interactive=False,
+                )
+            
+            # ШАГ 2: Клинические параметры
+            with gr.Group(visible=False, elem_classes=["step-panel", "disabled"]) as step2_panel:
+                gr.Markdown(
+                    """
+                    <h2 style="margin-bottom: 12px;">Шаг 2: Клинические параметры</h2>
+                    <p style="color: #718096; font-size: 14px; margin-bottom: 24px; line-height: 1.6;">
+                        Укажите параметры для корректировки модели анализа. Эти данные используются для адаптации алгоритма под возраст ребенка.
+                    </p>
+                    """
+                )
+                
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        patient_age_weeks = gr.Number(
+                            label="Возраст ребенка (недели)",
+                            value=12,
+                            minimum=0,
+                            maximum=20,
+                            step=1,
+                            container=True,
+                        )
+                    with gr.Column(scale=1):
+                        gestational_age = gr.Number(
+                            label="Гестационный возраст (недели)",
+                            value=40,
+                            minimum=24,
+                            maximum=42,
+                            step=1,
+                            container=True,
+                        )
+                
+                # Кнопки навигации
+                with gr.Row():
+                    back_to_step1_btn = gr.Button(
+                        "Назад",
+                        variant="secondary",
+                        scale=0,
                     )
-                with gr.Column(scale=1):
-                    logout_btn = gr.Button("🚪 Выйти", variant="stop")
+                    next_to_step3_btn = gr.Button(
+                        "Далее",
+                        variant="primary",
+                        scale=0,
+                    )
             
-            gr.Markdown("---")
-            
-            # Основной контент в табах
-            with gr.Tabs() as tabs:
-                # Вкладка 1: Анализ
-                with gr.Tab("📊 Анализ видео"):
-                    gr.Markdown("### Загрузка данных")
-                    
-                    with gr.Row():
-                        with gr.Column(scale=2):
-                            video_input = gr.File(
-                                label="Видео для анализа",
-                                file_types=[".mp4", ".avi", ".mov", ".mkv", ".webm"],
-                                file_count="single",
-                            )
-                        with gr.Column(scale=1):
-                            patient_age_weeks = gr.Number(
-                                label="Возраст (недели)",
-                                value=12,
-                                minimum=0,
-                                maximum=20,
-                                step=1,
-                            )
-                            gestational_age = gr.Number(
-                                label="Срок беременности (недели)",
-                                value=40,
-                                minimum=24,
-                                maximum=42,
-                                step=1,
-                            )
-                    
+            # ШАГ 3: Запуск анализа
+            with gr.Group(visible=False, elem_classes=["step-panel", "disabled"]) as step3_panel:
+                gr.Markdown(
+                    """
+                    <h2 style="margin-bottom: 12px;">Шаг 3: Запуск анализа</h2>
+                    <p style="color: #718096; font-size: 14px; margin-bottom: 24px; line-height: 1.6;">
+                        После загрузки видео и указания параметров запустите анализ движений. Процесс может занять несколько минут.
+                    </p>
+                    """
+                )
+                
+                # Индикатор прогресса
+                analysis_progress = gr.Progress()
+                
+                with gr.Row():
                     analyze_btn = gr.Button(
-                        "🚀 Начать анализ",
+                        "Запустить анализ движений",
                         variant="primary",
                         size="lg",
-                        scale=1
-                    )
-                    
-                    gr.Markdown("---")
-                    
-                    # Результаты анализа
-                    with gr.Row():
-                        with gr.Column(scale=1):
-                            gr.Markdown("### 📹 Видео с анализом")
-                            skeleton_video = gr.Video(
-                                label="Видео с наложенным скелетом",
-                                height=400
-                            )
-                        with gr.Column(scale=1):
-                            gr.Markdown("### 📈 График ошибки реконструкции")
-                            anomaly_plot = gr.Image(
-                                label="Динамика ошибки",
-                                height=400
-                            )
-                
-                # Вкладка 2: Отчет
-                with gr.Tab("📄 Медицинский отчет"):
-                    report_output = gr.Textbox(
-                        label="Результаты анализа",
-                        lines=30,
-                        max_lines=50,
+                        scale=1,
                         interactive=False,
                     )
-                
-                # Вкладка 3: Инструкции
-                with gr.Tab("ℹ️ Инструкции"):
-                    gr.Markdown(
-                        """
-                        ### 📋 Инструкция по съемке видео для GMA
-                        
-                        **Условия съемки:**
-                        - Ребенок лежит на спине, спокоен и внимателен
-                        - Легко одет (без носков)
-                        - Без сосок и игрушек
-                        - Родители рядом, но не взаимодействуют с ребенком
-                        - Съемка сверху, видны руки и ноги
-                        - Длительность: 1-3 минуты
-                        - Возраст: оптимально 12-14 недель после предполагаемой даты родов
-                        
-                        ---
-                        
-                        ### 🔬 Методология
-                        
-                        **Метод:** Анализ RGB-видео с использованием Bidirectional LSTM + Attention
-                        
-                        **Назначение:** Выявление ранних признаков церебрального паралича и других неврологических нарушений у младенцев (0-5 месяцев)
-                        
-                        **Точность:** Система обучена на данных MINI-RGBD (737 последовательностей здоровых младенцев)
-                        
-                        ---
-                        
-                        ### ⚠️ Важно
-                        
-                        - Система предназначена для **вспомогательной диагностики**
-                        - Результаты **не заменяют** консультацию специалиста
-                        - При обнаружении аномалий рекомендуется обратиться к врачу
-                        """
+                    cancel_analysis_btn = gr.Button(
+                        "Отменить анализ",
+                        variant="stop",
+                        size="lg",
+                        scale=0,
+                        visible=False,
+                        interactive=True,
                     )
-            
-            # Индикатор статуса загрузки моделей (только на главной странице)
-            gr.Markdown("---")
-            with gr.Row():
-                model_status = gr.Markdown(
-                    value="⏳ **Инициализация системы...** Загрузка моделей при старте.",
-                    visible=True,
+                
+                analysis_status = gr.Markdown(
+                    value="<div class='empty-state'><div class='empty-state-title'>Ожидание запуска анализа</div><p>Загрузите видео и укажите параметры для начала анализа</p></div>",
+                    visible=True
                 )
+                
+                # Кнопка возврата
+                back_to_step2_btn = gr.Button(
+                    "Назад",
+                    variant="secondary",
+                )
+            
+            # ШАГ 4: Результаты анализа
+            with gr.Group(visible=False, elem_classes=["step-panel", "disabled"]) as step4_panel:
+                gr.Markdown(
+                    """
+                    <h2 style="margin-bottom: 12px;">Шаг 4: Результаты анализа</h2>
+                    <p style="color: #718096; font-size: 14px; margin-bottom: 24px; line-height: 1.6;">
+                        Результаты анализа включают оценку риска, видео с наложенным скелетом и графики реконструкционной ошибки.
+                    </p>
+                    """
+                )
+                
+                # Текстовый отчет (первым)
+                report_output = gr.Textbox(
+                    label="Медицинский отчет",
+                    lines=20,
+                    max_lines=40,
+                    interactive=False,
+                    container=True,
+                    value="Результаты анализа появятся здесь после завершения обработки видео."
+                )
+                
+                gr.Markdown("<hr style='margin: 32px 0;'>")
+                
+                # Визуальные результаты
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        skeleton_video = gr.Video(
+                            label="Видео с наложенным скелетом",
+                            height=400,
+                            show_label=True,
+                        )
+                    with gr.Column(scale=1):
+                        anomaly_plot = gr.Image(
+                            label="График ошибки реконструкции",
+                            height=400,
+                            show_label=True,
+                        )
+                
+                # Кнопка нового анализа
+                new_analysis_btn = gr.Button(
+                    "Начать новый анализ",
+                    variant="primary",
+                    size="lg",
+                )
+            
+            # Статус системы (внизу)
+            model_status = gr.Markdown(
+                value="<div class='status-info'>Инициализация системы... Загрузка моделей при старте.</div>",
+                visible=True,
+            )
+            
+            # Скрытые элементы для управления
+            current_user_info = gr.State(value=None)
+            
+            gr.Markdown("</div>")  # Закрываем контейнер
         
-        # Функции аутентификации
-        def handle_login(username: str, password: str, current_token, current_auth, current_user) -> Tuple[str, str, bool, Optional[str], bool, Optional[Dict], gr.update, gr.update, str]:
-            """Обработка входа пользователя."""
-            if not username or not password:
+        # Вспомогательная функция для обновления header
+        def update_header(user_info_text: str, show_header: bool):
+            """Обновить header с информацией о пользователе (БЕЗ кнопки входа, ТОЛЬКО email и кнопка выхода)."""
+            if show_header and user_info_text and user_info_text != "Не авторизован" and "Пользователь:" in user_info_text:
+                # Извлекаем email из user_info_text
+                email = user_info_text.replace("Пользователь: ", "").split(" (")[0]
+                return f"""
+                <div class="header-panel">
+                    <div style="max-width: 1200px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <h1 style="margin: 0; font-size: 20px; font-weight: 600; color: #1a202c;">General Movements Assessment</h1>
+                            <p style="margin: 4px 0 0 0; font-size: 13px; color: #718096;">Система анализа движений младенцев</p>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 16px;">
+                            <span style="font-size: 13px; color: #4a5568;">{email}</span>
+                            <button id="header-logout-trigger" onclick="document.getElementById('header-logout-btn').click();" style="background: #e53e3e; border: none; border-radius: 4px; padding: 6px 16px; font-weight: 500; font-size: 13px; color: white; cursor: pointer; transition: background 0.2s ease;">Выйти</button>
+                        </div>
+                    </div>
+                </div>
+                """
+            return ""
+        
+        # Функции аутентификации с использованием AuthHandler и StateManager
+        def handle_login(email: str, password: str, current_token, current_auth, current_user) -> Tuple[str, str, bool, Optional[str], bool, Optional[Dict], gr.update, gr.update, gr.update, str, gr.update, str]:
+            """Обработка входа пользователя с использованием AuthHandler."""
+            if not email or not password:
                 return (
-                    "❌ Заполните все поля",
-                    "### 👤 Текущий пользователь\n\n*Не авторизован*",
+                    "<div class='status-error'>Заполните все поля</div>",
+                    "Текущий пользователь: Не авторизован",
                     False,
                     current_token,
                     False,
                     None,
                     gr.update(visible=True),  # login_page
+                    gr.update(visible=False),  # register_page
                     gr.update(visible=False),  # main_page
-                    "⏳ **Ожидание авторизации...**"
+                    "<div class='status-info'>Ожидание авторизации...</div>",
+                    gr.update(visible=False, value=""),
+                    "",
                 )
             
-            success, message, session_token, user_data = _auth_manager.login(username, password)
+            # Используем AuthHandler для входа
+            success, message, user_data, session_token = _auth_handler.login(email, password)
             
-            if success:
-                user_info = f"### 👤 Текущий пользователь\n\n**Имя:** {user_data['username']}\n"
-                if user_data.get('full_name'):
-                    user_info += f"**Полное имя:** {user_data['full_name']}\n"
-                if user_data.get('email'):
-                    user_info += f"**Email:** {user_data['email']}\n"
-                user_info += f"**Роль:** {user_data.get('role', 'user')}\n\n✅ Вы успешно вошли в систему"
+            if success and user_data and session_token:
+                # Обновляем состояние через StateManager
+                _state_manager.update_user(
+                    is_authenticated=True,
+                    session_token=session_token,
+                    email=user_data.get('email'),
+                    username=user_data.get('username'),
+                    full_name=user_data.get('full_name'),
+                    role=user_data.get('role', 'user'),
+                )
                 
-                # Загружаем модели при успешном входе
+                # Переходим на шаг загрузки видео
+                _step_manager.set_step(AnalysisStep.UPLOAD)
+                
+                user_info = f"Пользователь: {user_data.get('email', user_data.get('username', ''))}"
+                if user_data.get('full_name'):
+                    user_info += f" ({user_data['full_name']})"
+                
+                # Lazy loading моделей (не блокируем вход)
                 model_status_text = load_models_and_update_status()
                 
+                header_html = update_header(user_info, True)
                 return (
-                    f"✅ {message}",
+                    f"<div class='status-success'>{message}</div>",
                     user_info,
                     True,
                     session_token,
                     True,
                     user_data,
                     gr.update(visible=False),  # Скрыть страницу входа
+                    gr.update(visible=False),  # Скрыть страницу регистрации
                     gr.update(visible=True),    # Показать главную страницу
-                    model_status_text
+                    model_status_text,
+                    gr.update(visible=True, value=header_html),    # Показать header
+                    header_html,  # Обновить header info
                 )
             else:
                 return (
-                    f"❌ {message}",
-                    "### 👤 Текущий пользователь\n\n*Не авторизован*",
+                    f"<div class='status-error'>{message}</div>",
+                    "Текущий пользователь: Не авторизован",
                     False,
                     current_token,
                     False,
                     None,
                     gr.update(visible=True),   # Показать страницу входа
+                    gr.update(visible=False),  # Скрыть страницу регистрации
                     gr.update(visible=False),   # Скрыть главную страницу
-                    "⏳ **Ожидание авторизации...**"
+                    "<div class='status-info'>Ожидание авторизации...</div>",
+                    gr.update(visible=False, value=""),  # Скрыть header
+                    "",  # Header info
                 )
         
         def handle_register(
-            username: str,
-            password: str,
-            password_confirm: str,
             email: str,
             full_name: str,
+            password: str,
+            password_confirm: str,
             current_token,
             current_auth,
             current_user
-        ) -> Tuple[str, str, bool, Optional[str], bool, Optional[Dict], gr.update, gr.update, str]:
-            """Обработка регистрации пользователя."""
-            if not username or not password:
+        ) -> Tuple[str, str, bool, Optional[str], bool, Optional[Dict], gr.update, gr.update, gr.update, str, gr.update, str]:
+            """Обработка регистрации пользователя с использованием AuthHandler."""
+            # Используем AuthHandler для регистрации
+            success, message, user_data, session_token = _auth_handler.register(
+                email, password, password_confirm, full_name if full_name else None
+            )
+            
+            if not success:
                 return (
-                    "❌ Заполните имя пользователя и пароль",
-                    "### 👤 Текущий пользователь\n\n*Не авторизован*",
+                    f"<div class='status-error'>{message}</div>",
+                    "Текущий пользователь: Не авторизован",
                     False,
                     current_token,
                     False,
                     None,
-                    gr.update(visible=True),
-                    gr.update(visible=False),
-                    "⏳ **Ожидание авторизации...**"
+                    gr.update(visible=False),  # Скрыть страницу входа
+                    gr.update(visible=True),    # Показать страницу регистрации
+                    gr.update(visible=False),   # Скрыть главную страницу
+                    "<div class='status-info'>Ожидание авторизации...</div>",
+                    gr.update(visible=False, value=""),
+                    "",
                 )
             
-            if password != password_confirm:
+            if success and session_token and user_data:
+                # Обновляем состояние через StateManager
+                _state_manager.update_user(
+                    is_authenticated=True,
+                    session_token=session_token,
+                    email=user_data.get('email'),
+                    username=user_data.get('username'),
+                    full_name=user_data.get('full_name'),
+                    role=user_data.get('role', 'user'),
+                )
+                
+                # Переходим на шаг загрузки видео
+                _step_manager.set_step(AnalysisStep.UPLOAD)
+                
+                user_info = f"Пользователь: {user_data.get('email', user_data.get('username', ''))}"
+                if user_data.get('full_name'):
+                    user_info += f" ({user_data['full_name']})"
+                
+                # Lazy loading моделей
+                model_status_text = load_models_and_update_status()
+                
+                header_html = update_header(user_info, True)
                 return (
-                    "❌ Пароли не совпадают",
-                    "### 👤 Текущий пользователь\n\n*Не авторизован*",
-                    False,
-                    current_token,
-                    False,
-                    None,
-                    gr.update(visible=True),
-                    gr.update(visible=False),
-                    "⏳ **Ожидание авторизации...**"
+                    f"<div class='status-success'>{message}</div>",
+                    user_info,
+                    True,
+                    session_token,
+                    True,
+                    user_data,
+                    gr.update(visible=False),  # Скрыть страницу входа
+                    gr.update(visible=False),  # Скрыть страницу регистрации
+                    gr.update(visible=True),    # Показать главную страницу
+                    model_status_text,
+                    gr.update(visible=True, value=header_html),    # Показать header
+                    header_html,  # Обновить header info
                 )
-            
-            success, message, session_token = _auth_manager.register(
-                username, password, email if email else None, full_name if full_name else None
-            )
-            
-            if success and session_token:
-                # Получаем данные пользователя для отображения
-                auth_success, user_data, _ = _auth_manager.require_auth(session_token)
-                if auth_success:
-                    user_info = f"### 👤 Текущий пользователь\n\n**Имя:** {user_data['username']}\n"
-                    if user_data.get('full_name'):
-                        user_info += f"**Полное имя:** {user_data['full_name']}\n"
-                    if user_data.get('email'):
-                        user_info += f"**Email:** {user_data['email']}\n"
-                    user_info += f"**Роль:** {user_data.get('role', 'user')}\n\n✅ Регистрация успешна! Вы автоматически вошли в систему"
-                    
-                    # Загружаем модели при успешной регистрации
-                    model_status_text = load_models_and_update_status()
-                    
-                    return (
-                        f"✅ {message}",
-                        user_info,
-                        True,
-                        session_token,
-                        True,
-                        user_data,
-                        gr.update(visible=False),  # Скрыть страницу входа
-                        gr.update(visible=True),    # Показать главную страницу
-                        model_status_text
-                    )
-            
-            return (
-                f"❌ {message}",
-                "### 👤 Текущий пользователь\n\n*Не авторизован*",
-                False,
-                current_token,
-                False,
-                None,
-                gr.update(visible=True),
-                gr.update(visible=False),
-                "⏳ **Ожидание авторизации...**"
-            )
         
-        def handle_logout(current_token, current_auth, current_user) -> Tuple[str, bool, Optional[str], bool, Optional[Dict], gr.update, gr.update, str]:
+        def toggle_login_register(show_register: bool) -> Tuple[gr.update, gr.update]:
+            """Переключение между страницами входа и регистрации."""
+            if show_register:
+                return gr.update(visible=False), gr.update(visible=True)
+            else:
+                return gr.update(visible=True), gr.update(visible=False)
+        
+        def handle_logout(current_token, current_auth, current_user) -> Tuple[str, bool, Optional[str], bool, Optional[Dict], gr.update, gr.update, gr.update, str, gr.update, str]:
             """Обработка выхода пользователя."""
             if current_token:
                 _auth_manager.logout(current_token)
             return (
-                "### 👤 Текущий пользователь\n\n*Не авторизован*",
+                "Текущий пользователь: Не авторизован",
                 False,
                 None,
                 False,
                 None,
                 gr.update(visible=True),   # Показать страницу входа
+                gr.update(visible=False),  # Скрыть страницу регистрации
                 gr.update(visible=False),    # Скрыть главную страницу
-                "⏳ **Ожидание авторизации...**"
+                "<div class='status-info'>Ожидание авторизации...</div>",
+                gr.update(visible=False, value=""),  # Скрыть header
+                "",  # Header info
             )
         
-        def check_auth_status(current_token) -> Tuple[str, bool, Optional[str], bool, Optional[Dict], gr.update, gr.update, str]:
-            """Проверка статуса авторизации при загрузке страницы."""
-            user_data = _auth_manager.get_user_from_session(current_token)
+        def check_auth_status(current_token) -> Tuple[str, bool, Optional[str], bool, Optional[Dict], gr.update, gr.update, gr.update, str, gr.update, str]:
+            """Проверка статуса авторизации при загрузке страницы с использованием AuthHandler."""
+            user_data = _auth_handler.get_user_from_session(current_token)
             
             if user_data:
-                user_info = f"### 👤 Текущий пользователь\n\n**Имя:** {user_data['username']}\n"
-                if user_data.get('full_name'):
-                    user_info += f"**Полное имя:** {user_data['full_name']}\n"
-                if user_data.get('email'):
-                    user_info += f"**Email:** {user_data['email']}\n"
-                user_info += f"**Роль:** {user_data.get('role', 'user')}"
+                # Обновляем состояние через StateManager
+                _state_manager.update_user(
+                    is_authenticated=True,
+                    session_token=current_token,
+                    email=user_data.get('email'),
+                    username=user_data.get('username'),
+                    full_name=user_data.get('full_name'),
+                    role=user_data.get('role', 'user'),
+                )
                 
-                # Загружаем модели если пользователь авторизован
+                user_info = f"Пользователь: {user_data.get('email', user_data.get('username', ''))}"
+                if user_data.get('full_name'):
+                    user_info += f" ({user_data['full_name']})"
+                
+                # Lazy loading моделей
                 model_status_text = load_models_and_update_status()
                 
+                header_html = update_header(user_info, True)
                 return (
                     user_info,
                     True,
@@ -851,36 +1985,186 @@ def create_medical_interface():
                     True,
                     user_data,
                     gr.update(visible=False),  # Скрыть страницу входа
+                    gr.update(visible=False),  # Скрыть страницу регистрации
                     gr.update(visible=True),    # Показать главную страницу
-                    model_status_text
+                    model_status_text,
+                    gr.update(visible=True, value=header_html),    # Показать header
+                    header_html,  # Header info
                 )
             else:
+                # Сбрасываем состояние
+                _state_manager.update_user(is_authenticated=False, session_token=None)
+                _step_manager.set_step(AnalysisStep.LOGIN)
+                
                 return (
-                    "### 👤 Текущий пользователь\n\n*Не авторизован*",
+                    "Текущий пользователь: Не авторизован",
                     False,
                     None,
                     False,
                     None,
                     gr.update(visible=True),   # Показать страницу входа
+                    gr.update(visible=False),  # Скрыть страницу регистрации
                     gr.update(visible=False),    # Скрыть главную страницу
-                    "⏳ **Ожидание авторизации...**"
+                    "<div class='status-info'>Ожидание авторизации...</div>",
+                    gr.update(visible=False, value=""),  # Скрыть header
+                    "",  # Header info
+                )
+        
+        # Функции управления шагами
+        def update_step_on_video_upload(video_file, current_step_state):
+            """Обновить шаг при загрузке видео."""
+            if video_file is not None:
+                # Видео загружено - активируем шаг 2
+                return (
+                    2,  # current_step
+                    True,  # video_uploaded
+                    gr.update(visible=False),  # step1_panel - скрыть
+                    gr.update(visible=True, elem_classes=["step-panel", "active"]),  # step2_panel - показать
+                    gr.update(visible=False),  # step3_panel - скрыть
+                    gr.update(visible=False),  # step4_panel - скрыть
+                    "<div class='status-success'>Видео загружено успешно. Перейдите к шагу 2.</div>",  # video_status
+                    gr.update(interactive=True)  # analyze_btn
+                )
+            else:
+                return (
+                    1,  # current_step
+                    False,  # video_uploaded
+                    gr.update(visible=True, elem_classes=["step-panel", "active"]),  # step1_panel - показать
+                    gr.update(visible=False),  # step2_panel - скрыть
+                    gr.update(visible=False),  # step3_panel - скрыть
+                    gr.update(visible=False),  # step4_panel - скрыть
+                    "<div class='empty-state'><div class='empty-state-title'>Видео не загружено</div><p>Перетащите файл в область выше или нажмите для выбора</p></div>",  # video_status
+                    gr.update(interactive=False)  # analyze_btn
+                )
+        
+        def update_step_on_analysis_start():
+            """Обновить шаг при запуске анализа с использованием StepManager."""
+            global _cancel_event
+            # Создаем событие отмены
+            _cancel_event = threading.Event()
+            _cancel_event.clear()
+            
+            # Переходим к шагу анализа через StepManager
+            success, error = _step_manager.go_to_step(AnalysisStep.ANALYSIS)
+            if not success:
+                logger.warning(f"Не удалось перейти к шагу анализа: {error}")
+            
+            # Оптимизация памяти перед анализом
+            optimize_memory()
+            
+            return (
+                3,  # current_step для отображения
+                gr.update(visible=False),  # step1_panel - скрыть
+                gr.update(visible=False),  # step2_panel - скрыть
+                gr.update(visible=True, elem_classes=["step-panel", "active"]),  # step3_panel - показать
+                gr.update(visible=False),  # step4_panel - скрыть
+                "<div class='status-info'>Анализ выполняется. Пожалуйста, подождите...</div>",  # analysis_status
+                gr.update(visible=True),  # cancel_analysis_btn - показать
+            )
+        
+        def cancel_analysis():
+            """Отменить выполняющийся анализ."""
+            global _cancel_event
+            if _cancel_event:
+                _cancel_event.set()
+                logger.info("Запрошена отмена анализа")
+                return (
+                    "<div class='status-warning'>Анализ отменяется. Пожалуйста, подождите...</div>",
+                    gr.update(visible=False),  # cancel_analysis_btn - скрыть
+                )
+            return (
+                "<div class='status-info'>Анализ не выполняется</div>",
+                gr.update(visible=False),
+            )
+        
+        def update_step_on_analysis_complete(plot, video, report):
+            """Обновить шаг при завершении анализа с использованием StepManager и оптимизацией памяти."""
+            global _cancel_event
+            # Скрываем кнопку отмены
+            cancel_btn_update = gr.update(visible=False)
+            
+            if plot and video and report:
+                # Успешное завершение - переходим к шагу результатов
+                success, error = _step_manager.go_to_step(AnalysisStep.RESULTS)
+                if not success:
+                    logger.warning(f"Не удалось перейти к шагу результатов: {error}")
+                
+                # Оптимизация памяти после анализа
+                optimize_memory()
+                
+                # Обновляем состояние анализа
+                _state_manager.update_analysis(
+                    is_running=False,
+                    progress=1.0,
+                    current_step="Анализ завершен"
+                )
+                
+                return (
+                    4,  # current_step
+                    gr.update(visible=False),  # step1_panel - скрыть
+                    gr.update(visible=False),  # step2_panel - скрыть
+                    gr.update(visible=False),  # step3_panel - скрыть
+                    gr.update(visible=True, elem_classes=["step-panel", "active"]),  # step4_panel - показать
+                    "<div class='status-success'>Анализ завершен. Результаты доступны ниже.</div>",  # analysis_status
+                    cancel_btn_update,  # cancel_analysis_btn
+                )
+            else:
+                # Ошибка или отмена
+                error_msg = "<div class='status-error'>Анализ завершен с ошибкой или отменен.</div>"
+                if _cancel_event and _cancel_event.is_set():
+                    error_msg = "<div class='status-warning'>Анализ отменен пользователем.</div>"
+                    # При отмене остаемся на шаге анализа
+                    _step_manager.go_to_step(AnalysisStep.ANALYSIS)
+                
+                # Обновляем состояние анализа с ошибкой
+                _state_manager.update_analysis(
+                    is_running=False,
+                    is_cancelled=_cancel_event.is_set() if _cancel_event else False,
+                    error=error_msg
+                )
+                
+                # Очистка памяти при ошибке
+                optimize_memory()
+                
+                return (
+                    3,  # current_step - остаемся на шаге 3
+                    gr.update(visible=False),  # step1_panel
+                    gr.update(visible=False),  # step2_panel
+                    gr.update(visible=True, elem_classes=["step-panel", "active"]),  # step3_panel
+                    gr.update(visible=False),  # step4_panel
+                    error_msg,  # analysis_status
+                    cancel_btn_update,  # cancel_analysis_btn
                 )
         
         # Обработчики событий аутентификации
         # Автоматическая загрузка моделей при старте (только для авторизованных)
         def load_models_and_update_status():
-            """Загрузить модели и обновить статус."""
+            """Lazy loading моделей с оптимизацией памяти."""
+            global _model
+            
+            # Проверяем, загружены ли уже модели
+            if _model is not None:
+                state = _state_manager.get_state()
+                if state.models.is_loaded:
+                    return f"<div class='status-success'><strong>Система готова</strong><br>{state.models.status_message}</div>"
+            
             # Очистка памяти перед загрузкой
             optimize_memory()
             
-            status = load_models()
+            # Lazy loading моделей (загружаем только при необходимости)
+            status = load_models_lazy()
+            
+            # Обновляем состояние моделей
+            state = _state_manager.get_state()
+            
             # Форматируем статус для Markdown
-            if "✅" in status:
-                status_html = f"### ✅ **Система готова**\n\n{status.replace('✅ ', '')}"
-            elif "❌" in status:
-                status_html = f"### ❌ **Ошибка загрузки**\n\n{status.replace('❌ ', '')}"
+            if "успешно" in status.lower() or "готов" in status.lower():
+                status_html = f"<div class='status-success'><strong>Система готова</strong><br>{status}</div>"
+            elif "ошибка" in status.lower() or "недоступен" in status.lower():
+                status_html = f"<div class='status-error'><strong>Ошибка загрузки</strong><br>{status}</div>"
             else:
-                status_html = f"### ⏳ **{status}**"
+                status_html = f"<div class='status-info'><strong>{status}</strong></div>"
+            
             return status_html
         
         # Периодическая очистка сессий (каждые 24 часа)
@@ -903,7 +2187,7 @@ def create_medical_interface():
         # Обработчики событий аутентификации
         login_btn.click(
             fn=handle_login,
-            inputs=[login_username, login_password, session_token_storage, is_authenticated, current_user_data],
+            inputs=[login_email, login_password, session_token_storage, is_authenticated, current_user_data],
             outputs=[
                 login_status,
                 current_user_info,
@@ -912,14 +2196,17 @@ def create_medical_interface():
                 is_authenticated,
                 current_user_data,
                 login_page,
+                register_page,
                 main_page,
-                model_status
+                model_status,
+                header_info,
+                header_info,  # Для обновления текста в header
             ],
         )
         
         register_btn.click(
             fn=handle_register,
-            inputs=[reg_username, reg_password, reg_password_confirm, reg_email, reg_full_name, session_token_storage, is_authenticated, current_user_data],
+            inputs=[reg_email, reg_full_name, reg_password, reg_password_confirm, session_token_storage, is_authenticated, current_user_data],
             outputs=[
                 reg_status,
                 current_user_info,
@@ -928,8 +2215,11 @@ def create_medical_interface():
                 is_authenticated,
                 current_user_data,
                 login_page,
+                register_page,
                 main_page,
-                model_status
+                model_status,
+                header_info,
+                header_info,  # Для обновления текста в header
             ],
         )
         
@@ -943,9 +2233,30 @@ def create_medical_interface():
                 is_authenticated,
                 current_user_data,
                 login_page,
+                register_page,
                 main_page,
-                model_status
+                model_status,
+                header_info,
+                header_info,  # Для обновления текста в header
             ],
+        )
+        
+        # Функции переключения между страницами
+        def show_register():
+            return gr.update(visible=False), gr.update(visible=True)
+        
+        def show_login():
+            return gr.update(visible=True), gr.update(visible=False)
+        
+        # Переключение между страницами входа и регистрации
+        show_register_btn.click(
+            fn=show_register,
+            outputs=[login_page, register_page]
+        )
+        
+        show_login_btn.click(
+            fn=show_login,
+            outputs=[login_page, register_page]
         )
         
         # Проверка статуса при загрузке интерфейса
@@ -959,19 +2270,141 @@ def create_medical_interface():
                 is_authenticated,
                 current_user_data,
                 login_page,
+                register_page,
                 main_page,
-                model_status
+                model_status,
+                header_info,
+                header_info,  # Для обновления текста в header
             ],
         )
         
-        # Обработчики событий (только для авторизованных)
+        # Функции навигации между шагами
+        def go_to_step(step_num):
+            """Переход к указанному шагу с использованием StepManager."""
+            # Маппинг числовых шагов на AnalysisStep
+            step_mapping = {
+                1: AnalysisStep.UPLOAD,
+                2: AnalysisStep.PARAMETERS,
+                3: AnalysisStep.ANALYSIS,
+                4: AnalysisStep.RESULTS,
+            }
+            
+            target_step = step_mapping.get(step_num)
+            if target_step:
+                # Используем StepManager для перехода
+                success, error = _step_manager.go_to_step(target_step)
+                if not success:
+                    logger.warning(f"Не удалось перейти к шагу {step_num}: {error}")
+            
+            # Обновляем UI в зависимости от текущего шага
+            state = _state_manager.get_state()
+            current_analysis_step = state.current_step
+            
+            updates = {
+                AnalysisStep.UPLOAD: (
+                    1,
+                    gr.update(visible=True, elem_classes=["step-panel", "active"]),  # step1
+                    gr.update(visible=False),  # step2
+                    gr.update(visible=False),  # step3
+                    gr.update(visible=False),  # step4
+                ),
+                AnalysisStep.PARAMETERS: (
+                    2,
+                    gr.update(visible=False),  # step1
+                    gr.update(visible=True, elem_classes=["step-panel", "active"]),  # step2
+                    gr.update(visible=False),  # step3
+                    gr.update(visible=False),  # step4
+                ),
+                AnalysisStep.ANALYSIS: (
+                    3,
+                    gr.update(visible=False),  # step1
+                    gr.update(visible=False),  # step2
+                    gr.update(visible=True, elem_classes=["step-panel", "active"]),  # step3
+                    gr.update(visible=False),  # step4
+                ),
+                AnalysisStep.RESULTS: (
+                    4,
+                    gr.update(visible=False),  # step1
+                    gr.update(visible=False),  # step2
+                    gr.update(visible=False),  # step3
+                    gr.update(visible=True, elem_classes=["step-panel", "active"]),  # step4
+                ),
+            }
+            
+            if current_analysis_step in updates:
+                step_display, step1_upd, step2_upd, step3_upd, step4_upd = updates[current_analysis_step]
+                return (step_display, step1_upd, step2_upd, step3_upd, step4_upd)
+            
+            # Fallback на шаг 1
+            return (
+                1,
+                gr.update(visible=True, elem_classes=["step-panel", "active"]),
+                gr.update(visible=False),
+                gr.update(visible=False),
+                gr.update(visible=False),
+            )
+        
+        # Обработчики событий для управления шагами
+        video_input.change(
+            fn=lambda v: gr.update(interactive=bool(v)),
+            inputs=[video_input],
+            outputs=[next_to_step2_btn]
+        )
+        
+        next_to_step2_btn.click(
+            fn=lambda: go_to_step(2),
+            outputs=[current_step, step1_panel, step2_panel, step3_panel, step4_panel]
+        )
+        
+        back_to_step1_btn.click(
+            fn=lambda: go_to_step(1),
+            outputs=[current_step, step1_panel, step2_panel, step3_panel, step4_panel]
+        )
+        
+        next_to_step3_btn.click(
+            fn=lambda: go_to_step(3),
+            outputs=[current_step, step1_panel, step2_panel, step3_panel, step4_panel]
+        )
+        
+        back_to_step2_btn.click(
+            fn=lambda: go_to_step(2),
+            outputs=[current_step, step1_panel, step2_panel, step3_panel, step4_panel]
+        )
+        
+        new_analysis_btn.click(
+            fn=lambda: go_to_step(1),
+            outputs=[current_step, step1_panel, step2_panel, step3_panel, step4_panel]
+        )
+        
+        video_input.change(
+            fn=update_step_on_video_upload,
+            inputs=[video_input, current_step],
+            outputs=[current_step, video_uploaded, step1_panel, step2_panel, step3_panel, step4_panel, video_status, analyze_btn]
+        )
+        
+        # Обработчик запуска анализа
         analyze_btn.click(
+            fn=update_step_on_analysis_start,
+            inputs=[],
+            outputs=[current_step, step1_panel, step2_panel, step3_panel, step4_panel, analysis_status, cancel_analysis_btn]
+        ).then(
             fn=analyze_baby_video,
             inputs=[video_input, patient_age_weeks, gestational_age, session_token_storage],
-            outputs=[anomaly_plot, skeleton_video, report_output],
+            outputs=[anomaly_plot, skeleton_video, report_output]
+        ).then(
+            fn=update_step_on_analysis_complete,
+            inputs=[anomaly_plot, skeleton_video, report_output],
+            outputs=[current_step, step1_panel, step2_panel, step3_panel, step4_panel, analysis_status, cancel_analysis_btn]
+        )
+        
+        # Обработчик отмены анализа
+        cancel_analysis_btn.click(
+            fn=cancel_analysis,
+            inputs=[],
+            outputs=[analysis_status, cancel_analysis_btn]
         )
     
-    return interface
+    return interface, custom_css
 
 
 if __name__ == "__main__":
@@ -989,7 +2422,7 @@ if __name__ == "__main__":
                     continue
         raise RuntimeError(f"Не удалось найти свободный порт в диапазоне {start_port}-{start_port + max_attempts - 1}")
     
-    interface = create_medical_interface()
+    interface, custom_css = create_medical_interface()
     
     # Находим свободный порт
     port = find_free_port(7861)
@@ -1002,7 +2435,13 @@ if __name__ == "__main__":
             server_port=port,
             show_error=True,
             quiet=False,
-            theme=gr.themes.Soft()
+            css=custom_css,
+            theme=gr.themes.Soft(
+                primary_hue="purple",
+                secondary_hue="pink",
+                neutral_hue="gray",
+                font=("ui-sans-serif", "system-ui", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "Helvetica Neue", "Arial", "sans-serif"),
+            )
         )
     except KeyboardInterrupt:
         logger.info("Сервер остановлен пользователем")
