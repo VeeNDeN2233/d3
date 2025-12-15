@@ -79,7 +79,7 @@ def load_models(config_path: str = "config.yaml", checkpoint_path: str = "checkp
         return f"❌ Ошибка загрузки: {str(e)}"
 
 
-def analyze_baby_video(video_file) -> Tuple[Optional[str], Optional[str]]:
+def analyze_baby_video(video_file, age_weeks=None, gestational_age_weeks=None) -> Tuple[Optional[str], Optional[str]]:
     """
     Основная функция анализа видео.
     
@@ -147,7 +147,7 @@ def analyze_baby_video(video_file) -> Tuple[Optional[str], Optional[str]]:
             return None, f"❌ Ошибка: Указанный путь не является файлом!\n\nПуть: {actual_path}"
         
         # Обработка видео
-        keypoints_list, errors, is_anomaly = process_video(
+        keypoints_list, errors, is_anomaly, sequences_array = process_video(
             actual_path, _video_processor, _pose_processor, _detector, _config
         )
         
@@ -158,9 +158,11 @@ def analyze_baby_video(video_file) -> Tuple[Optional[str], Optional[str]]:
         # Визуализация
         visualize_results(errors, is_anomaly, output_dir, actual_path.stem, _detector.threshold)
         
-        # Генерация медицинского отчета
+        # Генерация медицинского отчета с детальным анализом
         report = generate_medical_report(
-            actual_path, errors, is_anomaly, _detector, output_dir
+            actual_path, errors, is_anomaly, _detector, output_dir,
+            age_weeks=age_weeks, gestational_age_weeks=gestational_age_weeks,
+            sequences_array=sequences_array
         )
         
         # Пути к результатам
@@ -186,53 +188,142 @@ def analyze_baby_video(video_file) -> Tuple[Optional[str], Optional[str]]:
 
 
 def format_medical_report(report: Dict) -> str:
-    """Форматировать медицинский отчет для отображения."""
+    """Форматировать медицинский отчет в формате GMA для отображения."""
     if not report:
         return "Ошибка: Отчет пуст"
     
     lines = []
-    lines.append("=" * 60)
-    lines.append("МЕДИЦИНСКИЙ ОТЧЕТ")
-    lines.append("=" * 60)
+    lines.append("=" * 70)
+    lines.append("ОТЧЕТ ПО ОЦЕНКЕ ОБЩИХ ДВИЖЕНИЙ (GMA)")
+    lines.append("=" * 70)
     lines.append("")
     
-    # Статистика
+    # GMA оценка
+    gma = report.get("gma_assessment", {})
+    if gma:
+        risk_level = gma.get("risk_level", "unknown").upper()
+        risk_emoji = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢", "UNKNOWN": "⚪"}
+        
+        lines.append("РЕЗУЛЬТАТ GMA ОЦЕНКИ:")
+        lines.append(f"  {risk_emoji.get(risk_level, '⚪')} Риск двигательных нарушений: {risk_level}")
+        lines.append(f"  Оценка общих движений: {gma.get('assessment_result', 'N/A')}")
+        lines.append(f"  Риск ДЦП: {gma.get('cp_risk', 'N/A')}")
+        
+        lines.append("")
+    else:
+        # Fallback для старых отчетов
+        anomaly = report.get("anomaly_detection", {})
+        risk_level = anomaly.get("risk_level", "unknown").upper()
+        risk_emoji = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢", "UNKNOWN": "⚪"}
+        lines.append("РЕЗУЛЬТАТ ОЦЕНКИ:")
+        lines.append(f"  {risk_emoji.get(risk_level, '⚪')} Риск двигательных нарушений: {risk_level}")
+        lines.append("")
+    
+    # Информация о пациенте
+    patient_info = report.get("patient_info", {})
+    if patient_info:
+        lines.append("ДАННЫЕ ПАЦИЕНТА:")
+        if "age_weeks" in patient_info:
+            lines.append(f"  Возраст: {patient_info['age_weeks']:.0f} недель после родов")
+        if "period" in patient_info:
+            lines.append(f"  Период: {patient_info['period']}")
+        if patient_info.get("premature"):
+            lines.append(f"  Недоношенность: {patient_info.get('gestational_age_weeks', 'N/A')} недель")
+            if "corrected_age" in patient_info and patient_info["corrected_age"]:
+                lines.append(f"  Скорректированный возраст: {patient_info['corrected_age']:.0f} недель")
+        lines.append("")
+    
+    # Статистика анализа
     stats = report.get("statistics", {})
-    lines.append("СТАТИСТИКА:")
-    lines.append(f"  Последовательностей: {stats.get('total_sequences', 'N/A')}")
-    lines.append(f"  Аномальных: {stats.get('anomalous_sequences', 'N/A')} ({stats.get('anomaly_rate', 0):.2f}%)")
+    lines.append("СТАТИСТИКА АНАЛИЗА:")
+    lines.append(f"  Проанализировано последовательностей: {stats.get('total_sequences', 'N/A')}")
+    lines.append(f"  Аномальных последовательностей: {stats.get('anomalous_sequences', 'N/A')} ({stats.get('anomaly_rate', 0):.2f}%)")
     lines.append("")
     
-    # Ошибки реконструкции
-    errors = report.get("reconstruction_errors", {})
-    lines.append("ОШИБКИ РЕКОНСТРУКЦИИ:")
-    lines.append(f"  Средняя: {errors.get('mean', 'N/A'):.6f}" if isinstance(errors.get('mean'), (int, float)) else f"  Средняя: {errors.get('mean', 'N/A')}")
-    lines.append(f"  Максимальная: {errors.get('max', 'N/A'):.6f}" if isinstance(errors.get('max'), (int, float)) else f"  Максимальная: {errors.get('max', 'N/A')}")
-    lines.append(f"  Минимальная: {errors.get('min', 'N/A'):.6f}" if isinstance(errors.get('min'), (int, float)) else f"  Минимальная: {errors.get('min', 'N/A')}")
-    lines.append(f"  Стандартное отклонение: {errors.get('std', 'N/A'):.6f}" if isinstance(errors.get('std'), (int, float)) else f"  Стандартное отклонение: {errors.get('std', 'N/A')}")
-    lines.append("")
+    # Детальный анализ аномалий
+    detailed_analysis = report.get("detailed_analysis", {})
+    if detailed_analysis.get("has_anomalies", False):
+        lines.append("ДЕТАЛЬНЫЙ АНАЛИЗ АНОМАЛИЙ:")
+        lines.append("")
+        
+        # Асимметрия
+        asymmetry = detailed_analysis.get("asymmetry", {})
+        if asymmetry.get("has_asymmetry", False):
+            lines.append("  🔍 Асимметрия движений:")
+            for finding in asymmetry.get("findings", []):
+                severity_icon = "🔴" if finding.get("severity") == "high" else "🟡"
+                lines.append(f"    {severity_icon} {finding['description']}")
+                if "data" in finding:
+                    data = finding["data"]
+                    if "asymmetry_ratio" in data:
+                        lines.append(f"      (Разница: {data['asymmetry_ratio']*100:.1f}%)")
+            lines.append("")
+        
+        # Анализ конкретных суставов
+        joint_analysis = detailed_analysis.get("joint_analysis", {})
+        if joint_analysis.get("findings"):
+            lines.append("  🔍 Отклонения в движениях суставов:")
+            for finding in joint_analysis["findings"]:
+                if finding["type"] == "reduced_movement":
+                    lines.append(f"    ⚠️ {finding['description']}")
+                    if "data" in finding:
+                        data = finding["data"]
+                        lines.append(f"      (Амплитуда снижена на {(1-data['ratio'])*100:.1f}%)")
+                elif finding["type"] == "high_speed":
+                    lines.append(f"    ⚡ {finding['description']}")
+                    if "data" in finding:
+                        data = finding["data"]
+                        lines.append(f"      (Скорость выше нормы в {data['ratio']:.1f} раз)")
+            lines.append("")
+        
+        # Скорость движений
+        speed_analysis = detailed_analysis.get("speed_analysis", {})
+        if speed_analysis.get("has_speed_anomalies", False):
+            lines.append("  🔍 Аномалии скорости движений:")
+            for finding in speed_analysis.get("findings", []):
+                if finding["type"] in ["overall_high_speed", "overall_low_speed"]:
+                    lines.append(f"    ⚡ {finding['description']}")
+                elif finding["type"] == "high_speed":
+                    lines.append(f"    ⚡ {finding['description']}")
+            lines.append("")
+        
+        # Амплитуда движений
+        amplitude_analysis = detailed_analysis.get("amplitude_analysis", {})
+        if amplitude_analysis.get("has_amplitude_anomalies", False):
+            lines.append("  🔍 Аномалии амплитуды движений:")
+            for finding in amplitude_analysis.get("findings", []):
+                lines.append(f"    📉 {finding['description']}")
+            lines.append("")
+    
+    # Выявленные признаки (краткое резюме)
+    detected_signs = gma.get("detected_signs", []) if gma else []
+    if detected_signs:
+        lines.append("ВЫЯВЛЕННЫЕ ПРИЗНАКИ (краткое резюме):")
+        for i, sign in enumerate(detected_signs, 1):
+            lines.append(f"  {i}. {sign}")
+        lines.append("")
     
     # Детекция аномалий
     anomaly = report.get("anomaly_detection", {})
-    risk_level = anomaly.get("risk_level", "unknown")
-    risk_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢", "unknown": "⚪"}
-    
-    lines.append("ДЕТЕКЦИЯ АНОМАЛИЙ:")
-    lines.append(f"  Уровень риска: {risk_emoji.get(risk_level, '⚪')} {risk_level.upper()}")
-    lines.append(f"  Порог аномалии: {anomaly.get('threshold', 'N/A'):.6f}" if isinstance(anomaly.get('threshold'), (int, float)) else f"  Порог аномалии: {anomaly.get('threshold', 'N/A')}")
-    lines.append(f"  Средний score: {anomaly.get('mean_anomaly_score', 'N/A'):.6f}" if isinstance(anomaly.get('mean_anomaly_score'), (int, float)) else f"  Средний score: {anomaly.get('mean_anomaly_score', 'N/A')}")
-    lines.append(f"  Процент аномалий: {anomaly.get('anomaly_rate_percent', 0):.2f}%")
-    lines.append("")
+    if anomaly:
+        lines.append("ТЕХНИЧЕСКИЕ ПАРАМЕТРЫ:")
+        lines.append(f"  Средний score аномалии: {anomaly.get('mean_anomaly_score', 'N/A'):.6f}" if isinstance(anomaly.get('mean_anomaly_score'), (int, float)) else f"  Средний score: {anomaly.get('mean_anomaly_score', 'N/A')}")
+        lines.append(f"  Порог детекции: {anomaly.get('threshold', 'N/A'):.6f}" if isinstance(anomaly.get('threshold'), (int, float)) else f"  Порог: {anomaly.get('threshold', 'N/A')}")
+        lines.append("")
     
     # Рекомендации
     recommendations = report.get("recommendations", [])
     if recommendations:
         lines.append("РЕКОМЕНДАЦИИ:")
-        for i, rec in enumerate(recommendations, 1):
-            lines.append(f"  {i}. {rec}")
+        for rec in recommendations:
+            lines.append(f"  {rec}")
         lines.append("")
     
-    lines.append("=" * 60)
+    lines.append("=" * 70)
+    lines.append("")
+    lines.append("⚠️ ВАЖНО: Данная система предназначена для вспомогательной диагностики.")
+    lines.append("Результаты не заменяют консультацию специалиста по GMA.")
+    lines.append("При выявлении высокого риска требуется консультация детского невролога.")
     
     return "\n".join(lines)
 
@@ -240,20 +331,33 @@ def format_medical_report(report: Dict) -> str:
 def create_medical_interface():
     """Создать Gradio интерфейс."""
     
-    with gr.Blocks(title="Детектор аномалий движений младенцев", theme=gr.themes.Soft()) as interface:
+    with gr.Blocks(title="Оценка общих движений (GMA) - Детектор аномалий", theme=gr.themes.Soft()) as interface:
         gr.Markdown(
             """
-            # 🍼 Детектор аномалий движений младенцев
+            # 🍼 Оценка общих движений (General Movements Assessment)
             
-            ### Используется улучшенная модель: **Bidirectional LSTM + Attention**
+            ### Автоматизированная система для раннего выявления риска двигательных нарушений
             
-            Система для анализа движений младенцев и оценки риска нарушений моторики на основе RGB-видео.
+            **Метод:** Анализ RGB-видео с использованием Bidirectional LSTM + Attention
+            
+            **Назначение:** Выявление ранних признаков церебрального паралича и других неврологических нарушений у младенцев (0-5 месяцев)
+            
+            ---
+            
+            **📋 Инструкция по съемке видео для GMA:**
+            - Ребенок лежит на спине, спокоен и внимателен
+            - Легко одет (без носков)
+            - Без сосок и игрушек
+            - Родители рядом, но не взаимодействуют с ребенком
+            - Съемка сверху, видны руки и ноги
+            - Длительность: 1-3 минуты
+            - Возраст: оптимально 12-14 недель после предполагаемой даты родов
             """
         )
         
         with gr.Row():
             with gr.Column(scale=1):
-                gr.Markdown("### 📋 Шаг 1: Инициализация")
+                gr.Markdown("### 📋 Шаг 1: Инициализация системы")
                 model_status = gr.Textbox(
                     label="Статус моделей",
                     value="⏳ Нажмите 'Загрузить модели' для инициализации системы",
@@ -267,20 +371,37 @@ def create_medical_interface():
                 )
             
             with gr.Column(scale=1):
-                gr.Markdown("### 📹 Шаг 2: Загрузка видео")
+                gr.Markdown("### 📹 Шаг 2: Загрузка видео и данные пациента")
                 video_input = gr.File(
-                    label="Выберите видео файл",
+                    label="Видео для GMA оценки",
                     file_types=[".mp4", ".avi", ".mov", ".mkv", ".webm"],
                     file_count="single",
-                    height=100,
+                    height=80,
                 )
-                gr.Markdown("**Поддерживаемые форматы:** MP4, AVI, MOV, MKV, WEBM")
+                
+                with gr.Row():
+                    patient_age_weeks = gr.Number(
+                        label="Возраст ребенка (недели после родов)",
+                        value=12,
+                        minimum=0,
+                        maximum=20,
+                        step=1,
+                        info="Оптимально: 12-14 недель"
+                    )
+                    gestational_age = gr.Number(
+                        label="Срок беременности при рождении (недели)",
+                        value=40,
+                        minimum=24,
+                        maximum=42,
+                        step=1,
+                        info="Для недоношенных детей"
+                    )
         
         gr.Markdown("---")
         
         with gr.Row():
             analyze_btn = gr.Button(
-                "🚀 Анализировать видео", 
+                "🚀 Начать GMA анализ", 
                 variant="primary",
                 size="lg",
                 scale=1
@@ -313,7 +434,7 @@ def create_medical_interface():
         
         analyze_btn.click(
             fn=analyze_baby_video,
-            inputs=video_input,  # Используем файл напрямую из UploadButton
+            inputs=[video_input, patient_age_weeks, gestational_age],  # Добавляем данные пациента
             outputs=[anomaly_plot, report_output],
         )
         

@@ -82,7 +82,7 @@ def process_video(
     pose_processor: PoseProcessor,
     detector: AnomalyDetector,
     config: dict,
-) -> Tuple[List[np.ndarray], List[float], List[bool]]:
+) -> Tuple[List[np.ndarray], List[float], List[bool], np.ndarray]:
     """Обработать видео и получить предсказания аномалий."""
     logger.info(f"Обработка видео: {video_path}")
     
@@ -122,7 +122,8 @@ def process_video(
     
     # Преобразуем в плоские векторы
     flattened_sequences = [pose_processor.flatten_sequence(seq) for seq in sequences]
-    sequences_tensor = torch.FloatTensor(np.array(flattened_sequences))
+    sequences_array = np.array(flattened_sequences)  # (N, 30, 75)
+    sequences_tensor = torch.FloatTensor(sequences_array)
     
     # Предсказание аномалий
     is_anomaly, errors = detector.predict(sequences_tensor.to(detector.device))
@@ -131,7 +132,7 @@ def process_video(
     if temp_output.exists():
         temp_output.unlink()
     
-    return keypoints_list, errors.tolist(), is_anomaly.tolist()
+    return keypoints_list, errors.tolist(), is_anomaly.tolist(), sequences_array
 
 
 def visualize_results(
@@ -180,26 +181,129 @@ def generate_report(
     is_anomaly: List[bool],
     detector: AnomalyDetector,
     output_dir: Path,
+    age_weeks: Optional[float] = None,
+    gestational_age_weeks: Optional[float] = None,
+    sequences_array: Optional[np.ndarray] = None,
 ) -> Dict:
-    """Генерация медицинского отчета."""
+    """Генерация медицинского отчета в формате GMA."""
     if len(errors) == 0:
         return {}
     
     errors_array = np.array(errors)
     anomaly_rate = np.mean(is_anomaly) * 100
     
-    # Определяем уровень риска
+    # Определяем уровень риска на основе GMA критериев
     mean_error = float(errors_array.mean())
+    
+    # GMA критерии риска
     if mean_error > detector.threshold * 1.5:
         risk_level = "high"
+        gma_assessment = "АНОМАЛЬНЫЕ общие движения"
+        cp_risk = "ВЫСОКИЙ риск церебрального паралича"
     elif mean_error > detector.threshold:
         risk_level = "medium"
+        gma_assessment = "ПОДОЗРИТЕЛЬНЫЕ общие движения"
+        cp_risk = "УМЕРЕННЫЙ риск неврологических нарушений"
     else:
         risk_level = "low"
+        gma_assessment = "НОРМАЛЬНЫЕ общие движения"
+        cp_risk = "НИЗКИЙ риск"
+    
+    # Детальный анализ аномалий по суставам
+    detailed_analysis = {}
+    if sequences_array is not None and len(sequences_array) > 0 and risk_level != "low":
+        try:
+            from utils.anomaly_analyzer import analyze_joint_errors
+            
+            sequences_np = np.array(sequences_array)
+            errors_np = np.array(errors)
+            
+            detailed_analysis = analyze_joint_errors(
+                sequences_np,
+                errors_np,
+                detector.threshold
+            )
+        except Exception as e:
+            logger.warning(f"Ошибка детального анализа: {e}")
+            detailed_analysis = {}
+    
+    # Определяем признаки аномалий на основе детального анализа
+    detected_signs = []
+    if detailed_analysis.get("has_anomalies", False):
+        # Асимметрия
+        asymmetry = detailed_analysis.get("asymmetry", {})
+        if asymmetry.get("has_asymmetry", False):
+            for finding in asymmetry.get("findings", []):
+                detected_signs.append(finding["description"])
+        
+        # Анализ суставов
+        joint_analysis = detailed_analysis.get("joint_analysis", {})
+        for finding in joint_analysis.get("findings", []):
+            if finding["type"] == "reduced_movement":
+                detected_signs.append(finding["description"])
+            elif finding["type"] == "high_speed":
+                detected_signs.append(finding["description"])
+        
+        # Скорость движений
+        speed_analysis = detailed_analysis.get("speed_analysis", {})
+        for finding in speed_analysis.get("findings", []):
+            detected_signs.append(finding["description"])
+        
+        # Амплитуда движений
+        amplitude_analysis = detailed_analysis.get("amplitude_analysis", {})
+        for finding in amplitude_analysis.get("findings", []):
+            detected_signs.append(finding["description"])
+    
+    # Fallback если детальный анализ недоступен
+    if len(detected_signs) == 0:
+        if anomaly_rate > 30:
+            detected_signs.append("высокая частота аномальных паттернов")
+        if mean_error > detector.threshold * 1.2:
+            detected_signs.append("сниженная вариабельность движений")
+        if len(detected_signs) == 0 and risk_level != "low":
+            detected_signs.append("отклонения от нормальных паттернов")
+    
+    # Рекомендации на основе GMA
+    recommendations = []
+    if risk_level == "low":
+        recommendations.append("✅ Рекомендация: Плановая оценка в 4 месяца")
+        recommendations.append("Продолжить стандартное наблюдение")
+    elif risk_level == "medium":
+        recommendations.append("⚠️ Рекомендация: Повторная оценка через 2-4 недели")
+        recommendations.append("Наблюдение у педиатра")
+    else:  # high
+        recommendations.append("🔴 Рекомендация: СРОЧНАЯ консультация детского невролога")
+        recommendations.append("Начать раннее вмешательство")
+        if detected_signs:
+            recommendations.append(f"Выявлены признаки: {', '.join(detected_signs)}")
+    
+    # Информация о возрасте
+    age_info = {}
+    if age_weeks is not None:
+        age_info["age_weeks"] = float(age_weeks)
+        if age_weeks >= 9 and age_weeks <= 20:
+            age_info["period"] = "Период суетливых движений (fidgety movements)"
+        elif age_weeks < 9:
+            age_info["period"] = "Ранний период (writhing movements)"
+        else:
+            age_info["period"] = "Поздний период"
+    
+    if gestational_age_weeks is not None:
+        age_info["gestational_age_weeks"] = float(gestational_age_weeks)
+        if gestational_age_weeks < 37:
+            age_info["premature"] = True
+            age_info["corrected_age"] = age_weeks - (40 - gestational_age_weeks) if age_weeks else None
     
     report = {
         "video_path": str(video_path),
         "analysis_date": str(Path.cwd()),
+        "gma_assessment": {
+            "assessment_result": gma_assessment,
+            "risk_level": risk_level.upper(),
+            "cp_risk": cp_risk,
+            "detected_signs": detected_signs,
+        },
+        "patient_info": age_info,
         "statistics": {
             "total_sequences": len(errors),
             "anomalous_sequences": sum(is_anomaly),
@@ -217,11 +321,8 @@ def generate_report(
             "risk_level": risk_level,
             "anomaly_rate_percent": anomaly_rate,
         },
-        "recommendations": [
-            f"Средняя ошибка реконструкции: {mean_error:.4f}",
-            f"Порог аномалии: {detector.threshold:.4f}",
-            f"Уровень риска: {risk_level}",
-        ],
+        "recommendations": recommendations,
+        "detailed_analysis": detailed_analysis,
     }
     
     # Сохраняем отчет
