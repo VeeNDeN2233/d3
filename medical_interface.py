@@ -258,7 +258,11 @@ def format_medical_report(report: Dict) -> str:
         lines.append("")
     
     # Детальный анализ аномалий
-    if detailed_analysis.get("has_anomalies", False):
+    # Показываем анализ, если есть аномалии ИЛИ есть аномалии амплитуды (критическое снижение)
+    amplitude_analysis = detailed_analysis.get("amplitude_analysis", {})
+    has_amplitude_anomalies = amplitude_analysis.get("has_amplitude_anomalies", False)
+    
+    if detailed_analysis.get("has_anomalies", False) or has_amplitude_anomalies:
         lines.append("ДЕТАЛЬНЫЙ АНАЛИЗ АНОМАЛИЙ:")
         lines.append(f"  Источник нормальных значений: {detailed_analysis.get('normal_statistics_source', 'N/A')}")
         lines.append("")

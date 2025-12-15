@@ -35,6 +35,7 @@ def analyze_joint_errors(
     threshold: float,
     normal_statistics: Optional[Dict] = None,
     age_weeks: Optional[float] = None,
+    analyze_all_sequences: bool = False,
 ) -> Dict:
     """
     Анализ ошибок реконструкции по суставам.
@@ -55,10 +56,32 @@ def analyze_joint_errors(
     anomalous_mask = reconstruction_errors > threshold
     normal_mask = ~anomalous_mask
     
-    if np.sum(anomalous_mask) == 0:
+    # Если analyze_all_sequences=True, анализируем ВСЕ последовательности
+    # (для обнаружения отсутствия движений даже при низкой ошибке реконструкции)
+    if analyze_all_sequences:
+        # Используем все последовательности для анализа амплитуды
+        analysis_mask = np.ones(len(sequences), dtype=bool)
+        # Но для других анализов (асимметрия, суставы) используем аномальные, если они есть
+        if np.sum(anomalous_mask) > 0:
+            # Есть аномальные - используем их для детального анализа
+            pass  # analysis_mask уже установлен на все
+        else:
+            # Нет аномальных по ошибке реконструкции, но нужно проверить амплитуду
+            # Используем все последовательности
+            pass
+    else:
+        # Используем только аномальные последовательности
+        analysis_mask = anomalous_mask
+        if np.sum(analysis_mask) == 0:
+            return {
+                "has_anomalies": False,
+                "message": "Аномалий не обнаружено"
+            }
+    
+    if np.sum(analysis_mask) == 0:
         return {
             "has_anomalies": False,
-            "message": "Аномалий не обнаружено"
+            "message": "Нет последовательностей для анализа"
         }
     
     # Загружаем нормальные статистики из тренировочных данных MINI-RGBD
@@ -71,8 +94,8 @@ def analyze_joint_errors(
             logger.warning(f"Не удалось загрузить нормальные статистики: {e}, используем данные из видео")
             normal_statistics = None
     
-    # Анализируем аномальные последовательности
-    anomalous_sequences = sequences[anomalous_mask]
+    # Анализируем последовательности (все или только аномальные)
+    analysis_sequences = sequences[analysis_mask]
     
     # Вычисляем статистики по суставам
     # sequences shape: (N, seq_len, 75) = (N, 30, 25*3)
@@ -80,20 +103,24 @@ def analyze_joint_errors(
     n_seqs, seq_len, _ = sequences.shape
     sequences_reshaped = sequences.reshape(n_seqs, seq_len, 25, 3)
     
-    anomalous_reshaped = sequences_reshaped[anomalous_mask]
+    analysis_reshaped = sequences_reshaped[analysis_mask]
     
-    # Вычисляем амплитуду движений для аномальных последовательностей
-    anomalous_amplitudes = np.std(anomalous_reshaped, axis=1)  # (N_anomalous, 25, 3)
-    anomalous_amplitude_mean = np.mean(anomalous_amplitudes, axis=0)  # (25, 3)
-    anomalous_amplitude_total = np.linalg.norm(anomalous_amplitude_mean, axis=1)  # (25,)
+    # Вычисляем амплитуду движений для анализируемых последовательностей
+    analysis_amplitudes = np.std(analysis_reshaped, axis=1)  # (N_analysis, 25, 3)
+    analysis_amplitude_mean = np.mean(analysis_amplitudes, axis=0)  # (25, 3)
+    analysis_amplitude_total = np.linalg.norm(analysis_amplitude_mean, axis=1)  # (25,)
     
-    # Вычисляем скорость движений для аномальных последовательностей
-    anomalous_velocities = []
-    for seq in anomalous_reshaped:
+    # Вычисляем скорость движений для анализируемых последовательностей
+    analysis_velocities = []
+    for seq in analysis_reshaped:
         diffs = np.diff(seq, axis=0)  # (seq_len-1, 25, 3)
         velocities = np.linalg.norm(diffs, axis=2)  # (seq_len-1, 25)
-        anomalous_velocities.append(np.mean(velocities, axis=0))  # (25,)
-    anomalous_velocity_mean = np.mean(anomalous_velocities, axis=0) if anomalous_velocities else np.zeros(25)
+        analysis_velocities.append(np.mean(velocities, axis=0))  # (25,)
+    analysis_velocity_mean = np.mean(analysis_velocities, axis=0) if analysis_velocities else np.zeros(25)
+    
+    # Для совместимости с остальным кодом используем те же переменные
+    anomalous_amplitude_total = analysis_amplitude_total
+    anomalous_velocity_mean = analysis_velocity_mean
     
     # Используем нормальные статистики из тренировочных данных
     if normal_statistics:
@@ -159,13 +186,25 @@ def analyze_joint_errors(
         normal_amplitude_std
     )
     
-    # Вычисляем общую шкалу тяжести
-    severity_score = calculate_severity_score(
-        asymmetry_analysis, joint_analysis, speed_analysis, amplitude_analysis
+    # Определяем, есть ли аномалии
+    # ВАЖНО: Проверяем не только ошибку реконструкции, но и амплитуду движений
+    has_anomalies = (
+        np.sum(anomalous_mask) > 0 or  # Аномалии по ошибке реконструкции
+        amplitude_analysis.get("has_amplitude_anomalies", False) or  # Аномалии амплитуды
+        asymmetry_analysis.get("has_asymmetry", False) or  # Асимметрия
+        len(joint_analysis.get("findings", [])) > 0 or  # Аномалии суставов
+        speed_analysis.get("has_speed_anomalies", False)  # Аномалии скорости
     )
     
+    # Вычисляем общую шкалу тяжести только если есть аномалии
+    severity_score = {}
+    if has_anomalies:
+        severity_score = calculate_severity_score(
+            asymmetry_analysis, joint_analysis, speed_analysis, amplitude_analysis
+        )
+    
     return {
-        "has_anomalies": True,
+        "has_anomalies": has_anomalies,
         "anomalous_sequences_count": int(np.sum(anomalous_mask)),
         "total_sequences": len(sequences),
         "asymmetry": asymmetry_analysis,
@@ -512,20 +551,70 @@ def analyze_movement_amplitude(
     normal_amplitude: np.ndarray,
     normal_amplitude_std: np.ndarray,
 ) -> Dict:
-    """Анализ амплитуды движений с использованием статистических порогов."""
+    """
+    Анализ амплитуды движений с использованием статистических порогов И абсолютных порогов.
+    
+    Использует:
+    1. Абсолютные пороги (физиологические) - для критических случаев
+    2. Z-score пороги (статистические) - для умеренных отклонений
+    """
     findings = []
     
-    # Общая амплитуда (z-score)
+    # Общая амплитуда
     total_anomalous_amplitude = np.mean(anomalous_amplitude)
     total_normal_amplitude = np.mean(normal_amplitude)
     total_normal_amplitude_std = np.mean(normal_amplitude_std)
     
+    # АБСОЛЮТНЫЕ ПОРОГИ (физиологические)
+    critical_amplitude_threshold = 0.01  # Практически нет движений
+    low_amplitude_threshold = 0.03      # Значительно сниженная активность
+    
+    # Определение типа аномалии по абсолютным порогам
+    critical_amplitude_drop = False
+    moderate_amplitude_drop = False
+    
+    # Критическое снижение (полное/почти полное отсутствие движений)
+    if total_anomalous_amplitude < critical_amplitude_threshold:
+        critical_amplitude_drop = True
+        reduction_pct = (1 - total_anomalous_amplitude / (total_normal_amplitude + 1e-6)) * 100
+        findings.append({
+            "type": "critical_absence_of_movement",
+            "description": f"КРИТИЧЕСКОЕ СНИЖЕНИЕ: амплитуда {total_anomalous_amplitude:.4f} < {critical_amplitude_threshold} (практически отсутствие движений)",
+            "severity": "high",
+            "confidence": "высокая (абсолютный порог)",
+            "data": {
+                "anomalous_amplitude": float(total_anomalous_amplitude),
+                "normal_amplitude": float(total_normal_amplitude),
+                "reduction_percent": float(reduction_pct),
+                "threshold": float(critical_amplitude_threshold),
+            }
+        })
+    
+    # Значительное снижение
+    elif total_anomalous_amplitude < low_amplitude_threshold:
+        moderate_amplitude_drop = True
+        reduction_pct = (1 - total_anomalous_amplitude / (total_normal_amplitude + 1e-6)) * 100
+        findings.append({
+            "type": "moderate_reduced_amplitude",
+            "description": f"СНИЖЕННАЯ АКТИВНОСТЬ: амплитуда {total_anomalous_amplitude:.4f} < {low_amplitude_threshold} (значительно сниженная активность)",
+            "severity": "medium",
+            "confidence": "высокая (абсолютный порог)",
+            "data": {
+                "anomalous_amplitude": float(total_anomalous_amplitude),
+                "normal_amplitude": float(total_normal_amplitude),
+                "reduction_percent": float(reduction_pct),
+                "threshold": float(low_amplitude_threshold),
+            }
+        })
+    
+    # Статистический анализ (z-score) для умеренных отклонений
     if total_normal_amplitude_std > 1e-6:
         z_score_amp = (total_normal_amplitude - total_anomalous_amplitude) / total_normal_amplitude_std
     else:
         z_score_amp = (total_normal_amplitude - total_anomalous_amplitude) / (total_normal_amplitude + 1e-6) * 2
     
-    if z_score_amp > 2.0:  # Снижение > 2 sigma
+    # Если z-score > 2.0 и еще не обнаружено абсолютными порогами
+    if z_score_amp > 2.0 and not critical_amplitude_drop and not moderate_amplitude_drop:
         severity = "high" if z_score_amp > 3.0 else "medium"
         reduction_pct = (1 - total_anomalous_amplitude / (total_normal_amplitude + 1e-6)) * 100
         findings.append({
@@ -544,7 +633,12 @@ def analyze_movement_amplitude(
     
     return {
         "findings": findings,
-        "has_amplitude_anomalies": len(findings) > 0
+        "has_amplitude_anomalies": len(findings) > 0,
+        "critical_amplitude_drop": critical_amplitude_drop,
+        "moderate_amplitude_drop": moderate_amplitude_drop,
+        "total_amplitude": float(total_anomalous_amplitude),
+        "normal_total_amplitude": float(total_normal_amplitude),
+        "amplitude_ratio": float(total_anomalous_amplitude / (total_normal_amplitude + 1e-6)),
     }
 
 

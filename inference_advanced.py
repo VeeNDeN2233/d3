@@ -210,8 +210,10 @@ def generate_report(
         cp_risk = "НИЗКИЙ риск"
     
     # Детальный анализ аномалий по суставам
+    # ВАЖНО: Анализируем ВСЕГДА, даже если risk_level = "low"
+    # чтобы обнаружить отсутствие движений независимо от ошибки реконструкции
     detailed_analysis = {}
-    if sequences_array is not None and len(sequences_array) > 0 and risk_level != "low":
+    if sequences_array is not None and len(sequences_array) > 0:
         try:
             from utils.anomaly_analyzer import analyze_joint_errors
             from utils.normal_statistics import get_normal_statistics
@@ -222,13 +224,35 @@ def generate_report(
             # Загружаем нормальные статистики из тренировочных данных
             normal_statistics = get_normal_statistics()
             
+            # Анализируем амплитуду движений для ВСЕХ последовательностей
+            # (не только аномальных по ошибке реконструкции)
             detailed_analysis = analyze_joint_errors(
                 sequences_np,
                 errors_np,
                 detector.threshold,
                 normal_statistics=normal_statistics,
-                age_weeks=age_weeks
+                age_weeks=age_weeks,
+                analyze_all_sequences=True  # Анализировать все, не только аномальные
             )
+            
+            # Проверяем аномалии амплитуды независимо от ошибки реконструкции
+            amplitude_analysis = detailed_analysis.get("amplitude_analysis", {})
+            if amplitude_analysis.get("has_amplitude_anomalies", False):
+                # Если есть критическое снижение амплитуды, повышаем уровень риска
+                if amplitude_analysis.get("critical_amplitude_drop", False):
+                    if risk_level == "low":
+                        risk_level = "high"
+                        anomaly_rate = 100.0  # Форсированно помечаем как аномалию
+                        gma_assessment = "АНОМАЛЬНЫЕ общие движения (критическое снижение активности)"
+                        cp_risk = "ВЫСОКИЙ риск (отсутствие/критическое снижение движений)"
+                    elif risk_level == "medium":
+                        risk_level = "high"
+                elif amplitude_analysis.get("moderate_amplitude_drop", False):
+                    if risk_level == "low":
+                        risk_level = "medium"
+                        anomaly_rate = max(anomaly_rate, 50.0)
+                        if gma_assessment == "НОРМАЛЬНЫЕ общие движения":
+                            gma_assessment = "ПОДОЗРИТЕЛЬНЫЕ общие движения (сниженная активность)"
         except Exception as e:
             logger.warning(f"Ошибка детального анализа: {e}")
             detailed_analysis = {}
