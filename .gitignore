@@ -1,0 +1,126 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# PyTorch
+*.pth
+*.pt
+!checkpoints/.gitkeep
+
+# Data and Datasets
+MINI-RGBD_web/
+test_videos/
+uploads/
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+
+# Results and Outputs
+results/
+*.png
+*.jpg
+*.jpeg
+*.json
+!config.json
+!package.json
+
+# Logs
+*.log
+logs/
+tensorboard_logs/
+
+# Checkpoints (keep structure but ignore files)
+checkpoints/*.pt
+checkpoints/*.pth
+!checkpoints/.gitkeep
+
+# Temporary files
+*.tmp
+*.temp
+temp_*
+tmp_*
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# MediaPipe cache
+*.tflite
+
+# Keypoints data
+keypoints/
+*.keypoints
+
+# Analysis results
+analysis_*/
+*_analysis/
+*_processed/
+
+# Model outputs
+outputs/
+predictions/
+
+# Environment variables
+.env
+.env.local
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# pytest
+.pytest_cache/
+.tox/
+
+# Profiling
+*.prof

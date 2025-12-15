@@ -1,0 +1,126 @@
+# Конфигурация системы детекции аномалий движений младенцев
+
+# Пути к данным
+data:
+  mini_rgbd_path: "MINI-RGBD_web"
+  rgb_subfolder: "rgb"
+  
+  # Разделение по последовательностям (БЕЗ УТЕЧКИ ДАННЫХ)
+  train_sequences: [1, 2, 3, 4, 5, 6, 7, 8]
+  val_sequences: [9, 10]
+  test_sequences: [11, 12]
+  
+  # Ограничение кадров для быстрого теста (None = все кадры)
+  max_frames_per_seq: 100  # ТЕСТОВЫЙ РЕЖИМ: 100 кадров на последовательность
+
+# Параметры обработки позы
+pose:
+  # MediaPipe параметры
+  model_complexity: 1  # 0, 1, или 2
+  min_detection_confidence: 0.5
+  min_tracking_confidence: 0.5
+  
+  # Преобразование в MINI-RGBD формат
+  output_joints: 25  # MINI-RGBD формат
+  
+  # Нормализация
+  normalize: true
+  normalize_relative_to: "torso"  # "torso" или "global"
+  target_hip_distance: 0.072221  # Фиксированный hip_distance из тренировочных данных (для стандартизации)
+  normalize_by_body: true  # Нормализация по bounding box всего тела (более устойчиво)
+  rotate_to_canonical: true  # Вращение к канонической ориентации (компенсация угла съемки)
+  
+  # Последовательности
+  sequence_length: 30  # количество кадров в последовательности
+  sequence_stride: 1   # шаг между последовательностями
+  
+  # Аугментация данных
+  augmentation:
+    enabled: true  # Включить аугментацию для улучшения обобщения
+    noise_level: 0.02  # Уровень шума (стандартное отклонение)
+    asymmetry_range: [-0.03, 0.03]  # Диапазон асимметрии
+    add_natural_variation: true  # Добавлять естественную изменчивость
+    rotation_range: 5.0  # Диапазон вращения в градусах
+    scale_range: [0.95, 1.05]  # Диапазон масштабирования
+
+# Архитектура модели
+model:
+  # Encoder
+  encoder_hidden_sizes: [128, 64, 32]
+  encoder_num_layers: 3
+  encoder_dropout: 0.2
+  
+  # Decoder
+  decoder_hidden_sizes: [64, 128, 75]
+  decoder_num_layers: 3
+  decoder_dropout: 0.2
+  
+  # Input/Output
+  input_size: 75  # 25 суставов * 3 координаты (x, y, z)
+  latent_size: 32
+
+# Обучение
+training:
+  device: "cuda"  # ТОЛЬКО GPU
+  batch_size: 16  # Уменьшено для тестирования
+  num_epochs: 10  # Уменьшено для быстрого теста
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  
+  # Mixed precision
+  use_amp: true  # Automatic Mixed Precision
+  
+  # Оптимизатор
+  optimizer: "adam"
+  scheduler: "cosine"
+  warmup_epochs: 5
+  
+  # Сохранение
+  save_dir: "checkpoints"
+  save_every: 10  # сохранять каждые N эпох
+  early_stopping_patience: 20
+
+# Детекция аномалий
+anomaly:
+  # Порог вычисляется ТОЛЬКО на validation данных
+  threshold_percentile: 95  # 95-й перцентиль ошибки реконструкции на val
+  
+  # Метрики
+  metrics:
+    - "mse"
+    - "mae"
+    - "cosine_similarity"
+
+# Инференс
+inference:
+  device: "cuda"
+  batch_size: 1
+  visualize: true
+  
+  # Визуализация
+  visualization:
+    show_skeleton: true
+    show_heatmap: true
+    show_error_plot: true
+    confidence_colormap: "viridis"
+    anomaly_colormap: "Reds"
+
+# Логирование
+logging:
+  level: "INFO"
+  log_dir: "logs"
+  log_file: "training.log"
+  
+# Визуализация результатов
+visualization:
+  save_plots: true
+  plot_dir: "plots"
+  dpi: 300
+
+# Аугментация данных
+augmentation:
+  enabled: true  # Включить аугментацию для train split
+  noise_level: 0.02  # Уровень шума (стандартное отклонение)
+  asymmetry_range: [-0.03, 0.03]  # Диапазон асимметрии
+  add_natural_variation: true  # Добавлять естественную изменчивость движений
+
