@@ -61,7 +61,7 @@ def create_skeleton_video(
     ]
     
     out = None
-    used_codec = None
+    used_codec = "unknown"  # Инициализируем значением по умолчанию
     for codec_name, codec_desc in fourcc_options:
         try:
             fourcc = cv2.VideoWriter_fourcc(*codec_name)
@@ -227,8 +227,34 @@ def create_skeleton_video_from_processed(
     logger.info(f"Видео: {width}x{height} @ {fps} FPS")
     
     # Создаем выходное видео
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(str(output_video_path), fourcc, fps, (width, height))
+    # Используем более совместимый кодек для веб-браузеров
+    fourcc_options = [
+        ('avc1', 'H.264/AVC'),  # Самый совместимый для веб
+        ('mp4v', 'MPEG-4'),      # Запасной вариант
+        ('XVID', 'XVID'),        # Еще один вариант
+    ]
+    
+    out = None
+    used_codec = "unknown"  # Инициализируем значением по умолчанию
+    for codec_name, codec_desc in fourcc_options:
+        try:
+            fourcc = cv2.VideoWriter_fourcc(*codec_name)
+            out = cv2.VideoWriter(str(output_video_path), fourcc, fps, (width, height))
+            if out.isOpened():
+                used_codec = codec_desc
+                logger.info(f"Используется кодек: {codec_desc} ({codec_name})")
+                break
+            else:
+                out.release()
+                out = None
+        except Exception as e:
+            logger.warning(f"Не удалось использовать кодек {codec_name}: {e}")
+            if out:
+                out.release()
+                out = None
+    
+    if out is None or not out.isOpened():
+        raise RuntimeError(f"Не удалось создать VideoWriter с доступными кодеками. Попробованы: {[c[0] for c in fourcc_options]}")
     
     # Инициализация MediaPipe для визуализации
     mp_pose = mp.solutions.pose

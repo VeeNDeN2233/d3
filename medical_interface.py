@@ -5,6 +5,7 @@ Gradio интерфейс для загрузки видео и получени
 """
 
 import logging
+import warnings
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -12,6 +13,9 @@ import gradio as gr
 import numpy as np
 import torch
 import yaml
+
+# Подавляем несущественные предупреждения asyncio на Windows
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="asyncio")
 
 from inference_advanced import (
     generate_report as generate_medical_report,
@@ -203,23 +207,46 @@ def analyze_baby_video(video_file, age_weeks=None, gestational_age_weeks=None) -
         # Возвращаем путь к графику, видео с скелетом и отчет
         # Для Gradio Video нужно использовать абсолютный путь
         video_path_for_gradio = None
-        if skeleton_video_path and skeleton_video_path.exists():
-            # Проверяем размер файла
-            file_size = skeleton_video_path.stat().st_size
-            if file_size > 0:
-                video_path_for_gradio = str(skeleton_video_path.resolve())
-                logger.info(f"✅ Видео готово для отображения: {video_path_for_gradio} ({file_size / 1024 / 1024:.2f} MB)")
+        if skeleton_video_path and isinstance(skeleton_video_path, Path):
+            if skeleton_video_path.exists():
+                # Проверяем размер файла
+                try:
+                    file_size = skeleton_video_path.stat().st_size
+                    if file_size > 0:
+                        # Используем абсолютный путь с нормализацией для Windows
+                        abs_path = skeleton_video_path.resolve()
+                        video_path_for_gradio = str(abs_path)
+                        
+                        # Проверяем, что файл действительно читается
+                        try:
+                            with open(abs_path, 'rb') as f:
+                                f.read(1024)  # Читаем первые 1024 байта для проверки
+                            logger.info(f"✅ Видео готово для отображения: {video_path_for_gradio} ({file_size / 1024 / 1024:.2f} MB)")
+                        except Exception as e:
+                            logger.error(f"❌ Не удалось прочитать видео файл: {e}")
+                            video_path_for_gradio = None
+                    else:
+                        logger.error(f"❌ Видео файл пуст: {skeleton_video_path}")
+                except Exception as e:
+                    logger.error(f"❌ Ошибка при проверке видео файла: {e}")
             else:
-                logger.error(f"❌ Видео файл пуст: {skeleton_video_path}")
+                logger.warning(f"❌ Видео не существует: {skeleton_video_path}")
         else:
-            logger.warning(f"❌ Видео не создано или не существует: {skeleton_video_path}")
+            logger.warning(f"❌ Видео не создано или путь некорректен: {skeleton_video_path}")
         
         # Если видео не создано, возвращаем исходное видео как fallback
         if video_path_for_gradio is None:
             logger.warning("Видео с скелетом недоступно, используем исходное видео")
             if original_video_path.exists():
-                video_path_for_gradio = str(original_video_path.resolve())
-                logger.info(f"Используется исходное видео: {video_path_for_gradio}")
+                try:
+                    abs_path = original_video_path.resolve()
+                    # Проверяем, что файл читается
+                    with open(abs_path, 'rb') as f:
+                        f.read(1024)
+                    video_path_for_gradio = str(abs_path)
+                    logger.info(f"Используется исходное видео: {video_path_for_gradio}")
+                except Exception as e:
+                    logger.error(f"Не удалось использовать исходное видео: {e}")
         
         return (
             str(plot_path.resolve()) if plot_path.exists() else None,
