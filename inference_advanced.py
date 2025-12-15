@@ -214,14 +214,20 @@ def generate_report(
     if sequences_array is not None and len(sequences_array) > 0 and risk_level != "low":
         try:
             from utils.anomaly_analyzer import analyze_joint_errors
+            from utils.normal_statistics import get_normal_statistics
             
             sequences_np = np.array(sequences_array)
             errors_np = np.array(errors)
             
+            # Загружаем нормальные статистики из тренировочных данных
+            normal_statistics = get_normal_statistics()
+            
             detailed_analysis = analyze_joint_errors(
                 sequences_np,
                 errors_np,
-                detector.threshold
+                detector.threshold,
+                normal_statistics=normal_statistics,
+                age_weeks=age_weeks
             )
         except Exception as e:
             logger.warning(f"Ошибка детального анализа: {e}")

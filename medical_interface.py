@@ -240,10 +240,27 @@ def format_medical_report(report: Dict) -> str:
     lines.append(f"  Аномальных последовательностей: {stats.get('anomalous_sequences', 'N/A')} ({stats.get('anomaly_rate', 0):.2f}%)")
     lines.append("")
     
-    # Детальный анализ аномалий
+    # Шкала тяжести
     detailed_analysis = report.get("detailed_analysis", {})
+    severity_score = detailed_analysis.get("severity_score", {})
+    if severity_score:
+        severity_level = severity_score.get("severity_level", "")
+        severity_color = severity_score.get("color", "gray")
+        total_score = severity_score.get("total_score", 0)
+        
+        lines.append("ОБЩАЯ ОЦЕНКА ТЯЖЕСТИ:")
+        if severity_color == "red":
+            lines.append(f"  🔴 {severity_level} (балл: {total_score})")
+        elif severity_color == "orange":
+            lines.append(f"  🟡 {severity_level} (балл: {total_score})")
+        else:
+            lines.append(f"  🟢 {severity_level} (балл: {total_score})")
+        lines.append("")
+    
+    # Детальный анализ аномалий
     if detailed_analysis.get("has_anomalies", False):
         lines.append("ДЕТАЛЬНЫЙ АНАЛИЗ АНОМАЛИЙ:")
+        lines.append(f"  Источник нормальных значений: {detailed_analysis.get('normal_statistics_source', 'N/A')}")
         lines.append("")
         
         # Асимметрия
@@ -252,11 +269,16 @@ def format_medical_report(report: Dict) -> str:
             lines.append("  🔍 Асимметрия движений:")
             for finding in asymmetry.get("findings", []):
                 severity_icon = "🔴" if finding.get("severity") == "high" else "🟡"
+                confidence = finding.get("confidence", "")
                 lines.append(f"    {severity_icon} {finding['description']}")
                 if "data" in finding:
                     data = finding["data"]
-                    if "asymmetry_ratio" in data:
-                        lines.append(f"      (Разница: {data['asymmetry_ratio']*100:.1f}%)")
+                    if "deviation_sigma" in data:
+                        lines.append(f"      Отклонение: {data['deviation_sigma']:.2f}σ от нормы")
+                    if "ratio" in data:
+                        lines.append(f"      Соотношение левая/правая: {data['ratio']:.2f} (норма: {data.get('normal_ratio', 1.0):.2f})")
+                if confidence:
+                    lines.append(f"      Уверенность: {confidence}")
             lines.append("")
         
         # Анализ конкретных суставов
@@ -264,16 +286,29 @@ def format_medical_report(report: Dict) -> str:
         if joint_analysis.get("findings"):
             lines.append("  🔍 Отклонения в движениях суставов:")
             for finding in joint_analysis["findings"]:
+                severity_icon = "🔴" if finding.get("severity") == "high" else "🟡"
+                confidence = finding.get("confidence", "")
+                
                 if finding["type"] == "reduced_movement":
-                    lines.append(f"    ⚠️ {finding['description']}")
+                    lines.append(f"    {severity_icon} {finding['description']}")
                     if "data" in finding:
                         data = finding["data"]
-                        lines.append(f"      (Амплитуда снижена на {(1-data['ratio'])*100:.1f}%)")
+                        if "reduction_percent" in data:
+                            lines.append(f"      Амплитуда снижена на {data['reduction_percent']:.1f}%")
+                        if "deviation_sigma" in data:
+                            lines.append(f"      Отклонение: {data['deviation_sigma']:.2f}σ от нормы")
+                    if confidence:
+                        lines.append(f"      Уверенность: {confidence}")
                 elif finding["type"] == "high_speed":
-                    lines.append(f"    ⚡ {finding['description']}")
+                    lines.append(f"    {severity_icon} {finding['description']}")
                     if "data" in finding:
                         data = finding["data"]
-                        lines.append(f"      (Скорость выше нормы в {data['ratio']:.1f} раз)")
+                        if "ratio" in data:
+                            lines.append(f"      Скорость выше нормы в {data['ratio']:.1f} раз")
+                        if "deviation_sigma" in data:
+                            lines.append(f"      Отклонение: {data['deviation_sigma']:.2f}σ от нормы")
+                    if confidence:
+                        lines.append(f"      Уверенность: {confidence}")
             lines.append("")
         
         # Скорость движений
@@ -281,10 +316,15 @@ def format_medical_report(report: Dict) -> str:
         if speed_analysis.get("has_speed_anomalies", False):
             lines.append("  🔍 Аномалии скорости движений:")
             for finding in speed_analysis.get("findings", []):
-                if finding["type"] in ["overall_high_speed", "overall_low_speed"]:
-                    lines.append(f"    ⚡ {finding['description']}")
-                elif finding["type"] == "high_speed":
-                    lines.append(f"    ⚡ {finding['description']}")
+                severity_icon = "🔴" if finding.get("severity") == "high" else "🟡"
+                confidence = finding.get("confidence", "")
+                lines.append(f"    {severity_icon} {finding['description']}")
+                if "data" in finding:
+                    data = finding["data"]
+                    if "deviation_sigma" in data:
+                        lines.append(f"      Отклонение: {data['deviation_sigma']:.2f}σ от нормы")
+                if confidence:
+                    lines.append(f"      Уверенность: {confidence}")
             lines.append("")
         
         # Амплитуда движений
@@ -292,7 +332,17 @@ def format_medical_report(report: Dict) -> str:
         if amplitude_analysis.get("has_amplitude_anomalies", False):
             lines.append("  🔍 Аномалии амплитуды движений:")
             for finding in amplitude_analysis.get("findings", []):
-                lines.append(f"    📉 {finding['description']}")
+                severity_icon = "🔴" if finding.get("severity") == "high" else "🟡"
+                confidence = finding.get("confidence", "")
+                lines.append(f"    {severity_icon} {finding['description']}")
+                if "data" in finding:
+                    data = finding["data"]
+                    if "reduction_percent" in data:
+                        lines.append(f"      Снижение на {data['reduction_percent']:.1f}%")
+                    if "deviation_sigma" in data:
+                        lines.append(f"      Отклонение: {data['deviation_sigma']:.2f}σ от нормы")
+                if confidence:
+                    lines.append(f"      Уверенность: {confidence}")
             lines.append("")
     
     # Выявленные признаки (краткое резюме)
