@@ -79,12 +79,12 @@ def load_models(config_path: str = "config.yaml", checkpoint_path: str = "checkp
         return f"❌ Ошибка загрузки: {str(e)}"
 
 
-def analyze_baby_video(video_path) -> Tuple[Optional[str], Optional[str]]:
+def analyze_baby_video(video_file) -> Tuple[Optional[str], Optional[str]]:
     """
     Основная функция анализа видео.
     
     Args:
-        video_path: Путь к видео файлу (может быть str или dict от Gradio)
+        video_file: Файл от Gradio File компонента
     
     Returns:
         Tuple (anomaly_plot_path, report_json)
@@ -92,60 +92,75 @@ def analyze_baby_video(video_path) -> Tuple[Optional[str], Optional[str]]:
     global _model, _detector, _config, _video_processor, _pose_processor
     
     if _model is None or _detector is None:
-        return None, "Ошибка: Модели не загружены! Нажмите 'Загрузить модели'."
+        return None, "❌ Ошибка: Модели не загружены!\n\nНажмите 'Загрузить модели' для инициализации системы."
     
     try:
-        # gr.File возвращает объект с атрибутом .name или строку
-        if video_path is None:
-            return None, "Ошибка: Видео не загружено!"
+        if video_file is None:
+            return None, "❌ Ошибка: Видео не загружено!\n\nПожалуйста, загрузите видео файл перед анализом."
         
-        # video_path теперь приходит из текстового поля (строка с путем)
-        logger.info(f"Получен video_path типа: {type(video_path)}, значение: {video_path}")
+        # Обработка разных типов входных данных от Gradio
+        logger.info(f"Получен video_file типа: {type(video_file)}")
         
-        # Это должна быть строка с путем к файлу
-        actual_path = str(video_path).strip() if video_path else ""
+        # Gradio File может вернуть:
+        # 1. Объект File с атрибутом .name
+        # 2. Строку с путем
+        # 3. Список файлов
+        # 4. None
         
-        if not actual_path:
-            return None, "Ошибка: Путь к видео пустой!"
+        actual_path = None
         
-        video_path_obj = Path(actual_path)
+        # Если это список
+        if isinstance(video_file, list):
+            if len(video_file) > 0:
+                video_file = video_file[0]
+            else:
+                return None, "❌ Ошибка: Список файлов пуст!"
+        
+        # Получаем путь к файлу
+        if hasattr(video_file, 'name'):
+            # Объект File от Gradio
+            actual_path = video_file.name
+            logger.info(f"Файл из объекта File: {actual_path}")
+        elif isinstance(video_file, str):
+            # Строка с путем
+            actual_path = video_file.strip()
+            logger.info(f"Файл из строки: {actual_path}")
+        elif video_file is not None:
+            # Попытка преобразовать в строку
+            actual_path = str(video_file).strip()
+            logger.info(f"Файл преобразован в строку: {actual_path}")
+        
+        if not actual_path or actual_path == "None":
+            return None, "❌ Ошибка: Не удалось определить путь к файлу!\n\nПопробуйте загрузить видео снова."
+        
+        # Нормализуем путь (исправляем обратные слэши на Windows)
+        actual_path = Path(actual_path).resolve()
+        logger.info(f"Обработка файла: {actual_path}")
         
         # Проверяем существование файла
-        if not video_path_obj.exists():
-            # Пробуем найти файл в других местах
-            filename = video_path_obj.name
-            possible_locations = [
-                video_path_obj,
-                Path("test_videos") / filename,
-                Path("uploads") / filename,
-                Path(filename),  # Текущая директория
-            ]
-            
-            found = False
-            for loc in possible_locations:
-                if loc.exists():
-                    video_path_obj = loc
-                    found = True
-                    break
-            
-            if not found:
-                return None, f"Ошибка: Файл не найден: {actual_path}\nПопробуйте загрузить видео снова."
+        if not actual_path.exists():
+            logger.error(f"Файл не существует: {actual_path}")
+            return None, f"❌ Ошибка: Файл не найден!\n\nПуть: {actual_path}\n\nПопробуйте загрузить видео снова."
+        
+        if not actual_path.is_file():
+            logger.error(f"Путь не является файлом: {actual_path}")
+            return None, f"❌ Ошибка: Указанный путь не является файлом!\n\nПуть: {actual_path}"
         
         # Обработка видео
         keypoints_list, errors, is_anomaly = process_video(
-            video_path_obj, _video_processor, _pose_processor, _detector, _config
+            actual_path, _video_processor, _pose_processor, _detector, _config
         )
         
         # Создаем временную директорию для результатов
-        output_dir = Path("results") / f"analysis_{video_path_obj.stem}"
+        output_dir = Path("results") / f"analysis_{actual_path.stem}"
         output_dir.mkdir(parents=True, exist_ok=True)
         
         # Визуализация
-        visualize_results(errors, is_anomaly, output_dir, video_path_obj.stem, _detector.threshold)
+        visualize_results(errors, is_anomaly, output_dir, actual_path.stem, _detector.threshold)
         
         # Генерация медицинского отчета
         report = generate_medical_report(
-            video_path_obj, errors, is_anomaly, _detector, output_dir
+            actual_path, errors, is_anomaly, _detector, output_dir
         )
         
         # Пути к результатам
@@ -161,7 +176,13 @@ def analyze_baby_video(video_path) -> Tuple[Optional[str], Optional[str]]:
         )
     except Exception as e:
         logger.error(f"Ошибка анализа: {e}", exc_info=True)
-        return None, f"Ошибка анализа: {str(e)}\n\nДетали: {type(e).__name__}: {str(e)}"
+        error_msg = f"❌ Ошибка при анализе видео:\n\n{str(e)}\n\n"
+        error_msg += f"Тип ошибки: {type(e).__name__}\n\n"
+        error_msg += "Пожалуйста, проверьте:\n"
+        error_msg += "1. Видео файл загружен корректно\n"
+        error_msg += "2. Модели загружены (нажмите 'Загрузить модели')\n"
+        error_msg += "3. Формат видео поддерживается\n"
+        return None, error_msg
 
 
 def format_medical_report(report: Dict) -> str:
@@ -219,54 +240,69 @@ def format_medical_report(report: Dict) -> str:
 def create_medical_interface():
     """Создать Gradio интерфейс."""
     
-    with gr.Blocks(title="Детектор аномалий движений младенцев") as interface:
+    with gr.Blocks(title="Детектор аномалий движений младенцев", theme=gr.themes.Soft()) as interface:
         gr.Markdown(
             """
             # 🍼 Детектор аномалий движений младенцев
             
-            **Используется улучшенная модель: Bidirectional LSTM + Attention**
+            ### Используется улучшенная модель: **Bidirectional LSTM + Attention**
             
-            Загрузите видео младенца для анализа движений и оценки риска нарушений моторики.
-            
-            **Инструкция:**
-            1. Нажмите "Загрузить модели" для инициализации системы
-            2. Загрузите видео файл (MP4, AVI, MOV, MKV)
-            3. Нажмите "Анализировать видео"
-            4. Просмотрите результаты и медицинский отчет
+            Система для анализа движений младенцев и оценки риска нарушений моторики на основе RGB-видео.
             """
         )
         
         with gr.Row():
-            with gr.Column():
+            with gr.Column(scale=1):
+                gr.Markdown("### 📋 Шаг 1: Инициализация")
                 model_status = gr.Textbox(
                     label="Статус моделей",
-                    value="Нажмите 'Загрузить модели' для инициализации",
+                    value="⏳ Нажмите 'Загрузить модели' для инициализации системы",
                     interactive=False,
+                    lines=3,
                 )
-                load_models_btn = gr.Button("Загрузить модели", variant="primary")
+                load_models_btn = gr.Button(
+                    "🔄 Загрузить модели", 
+                    variant="primary",
+                    size="lg"
+                )
             
-            with gr.Column():
-                video_input = gr.UploadButton(
-                    label="Загрузите видео младенца (MP4, AVI, MOV, MKV)",
+            with gr.Column(scale=1):
+                gr.Markdown("### 📹 Шаг 2: Загрузка видео")
+                video_input = gr.File(
+                    label="Выберите видео файл",
                     file_types=[".mp4", ".avi", ".mov", ".mkv", ".webm"],
                     file_count="single",
+                    height=100,
                 )
-                video_path_display = gr.Textbox(
-                    label="Путь к загруженному файлу",
-                    interactive=False,
-                    visible=False,
-                )
-                analyze_btn = gr.Button("Анализировать видео", variant="primary")
+                gr.Markdown("**Поддерживаемые форматы:** MP4, AVI, MOV, MKV, WEBM")
+        
+        gr.Markdown("---")
+        
+        with gr.Row():
+            analyze_btn = gr.Button(
+                "🚀 Анализировать видео", 
+                variant="primary",
+                size="lg",
+                scale=1
+            )
+        
+        gr.Markdown("---")
         
         with gr.Row():
             with gr.Column():
-                anomaly_plot = gr.Image(label="График аномалий")
+                gr.Markdown("### 📊 График ошибки реконструкции")
+                anomaly_plot = gr.Image(
+                    label="График аномалий",
+                    height=400
+                )
             
             with gr.Column():
+                gr.Markdown("### 📄 Медицинский отчет")
                 report_output = gr.Textbox(
-                    label="Медицинский отчет",
-                    lines=20,
+                    label="Результаты анализа",
+                    lines=25,
                     max_lines=30,
+                    interactive=False,
                 )
         
         # Обработчики событий
@@ -275,22 +311,9 @@ def create_medical_interface():
             outputs=model_status,
         )
         
-        # Обработчик загрузки файла
-        def handle_file_upload(files):
-            if files is None or len(files) == 0:
-                return None, "Файл не загружен"
-            file_path = files[0].name if hasattr(files[0], 'name') else str(files[0])
-            return file_path, f"Файл загружен: {Path(file_path).name}"
-        
-        video_input.upload(
-            fn=handle_file_upload,
-            inputs=video_input,
-            outputs=[video_path_display, model_status],
-        )
-        
         analyze_btn.click(
             fn=analyze_baby_video,
-            inputs=video_path_display,  # Используем путь из текстового поля
+            inputs=video_input,  # Используем файл напрямую из UploadButton
             outputs=[anomaly_plot, report_output],
         )
         
@@ -308,24 +331,35 @@ def create_medical_interface():
 
 
 if __name__ == "__main__":
+    import socket
+    
+    def find_free_port(start_port=7861, max_attempts=10):
+        """Найти свободный порт начиная с start_port."""
+        for i in range(max_attempts):
+            port = start_port + i
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                try:
+                    s.bind(('127.0.0.1', port))
+                    return port
+                except OSError:
+                    continue
+        raise RuntimeError(f"Не удалось найти свободный порт в диапазоне {start_port}-{start_port + max_attempts - 1}")
+    
     interface = create_medical_interface()
+    
+    # Находим свободный порт
+    port = find_free_port(7861)
+    logger.info(f"Запуск сервера на порту {port}...")
+    
     try:
         interface.launch(
             share=False,
             server_name="127.0.0.1",
-            server_port=7861,
+            server_port=port,
             show_error=True,
             quiet=False,
         )
     except Exception as e:
         logger.error(f"Ошибка запуска сервера: {e}")
-        # Пробуем альтернативный порт
-        logger.info("Пробуем порт 7862...")
-        interface.launch(
-            share=False,
-            server_name="127.0.0.1",
-            server_port=7862,
-            show_error=True,
-            quiet=False,
-        )
+        raise
 
