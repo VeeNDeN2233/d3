@@ -365,6 +365,61 @@ class PoseProcessor:
         
         return sequences
 
+    def filter_low_confidence_keypoints(
+        self, keypoints_array: np.ndarray, min_visibility: float = 0.3
+    ) -> np.ndarray:
+        """
+        Фильтрует точки с низкой уверенностью (visibility).
+        Точки с visibility < min_visibility заменяются на NaN.
+        
+        Args:
+            keypoints_array: Массив формы (33, 4) [x, y, z, visibility]
+            min_visibility: Минимальный порог visibility
+        
+        Returns:
+            Отфильтрованный массив (точки с низкой уверенностью = NaN)
+        """
+        filtered = keypoints_array.copy()
+        visibility = keypoints_array[:, 3]  # 4-й столбец - visibility
+        
+        # Заменяем точки с низкой уверенностью на NaN
+        low_confidence_mask = visibility < min_visibility
+        filtered[low_confidence_mask, :3] = np.nan  # x, y, z становятся NaN
+        
+        return filtered
+    
+    def smooth_keypoints_temporally(
+        self, keypoints_list: List[np.ndarray], window_size: int = 3
+    ) -> List[np.ndarray]:
+        """
+        Сглаживает ключевые точки по времени с помощью скользящего среднего.
+        
+        Args:
+            keypoints_list: Список массивов формы (33, 4)
+            window_size: Размер окна для сглаживания
+        
+        Returns:
+            Список сглаженных массивов
+        """
+        if len(keypoints_list) < window_size:
+            return keypoints_list
+        
+        smoothed = []
+        for i in range(len(keypoints_list)):
+            # Окно для скользящего среднего
+            start = max(0, i - window_size // 2)
+            end = min(len(keypoints_list), i + window_size // 2 + 1)
+            
+            # Среднее по окну (игнорируем NaN)
+            window = np.array(keypoints_list[start:end])
+            smoothed_frame = np.nanmean(window, axis=0)
+            
+            # Заменяем NaN на 0
+            smoothed_frame = np.nan_to_num(smoothed_frame, nan=0.0)
+            smoothed.append(smoothed_frame.astype(np.float32))
+        
+        return smoothed
+    
     def process_keypoints(
         self, keypoints_list: List[Optional[np.ndarray]]
     ) -> List[np.ndarray]:

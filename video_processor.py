@@ -130,12 +130,16 @@ class VideoProcessor:
 
                 # Сохранение keypoints (конвертация в MINI-RGBD формат)
                 if save_keypoints:
+                    landmarks_33 = self._landmarks_to_list(results.pose_landmarks)
+                    # Конвертируем 33 точки MediaPipe в 25 точек MINI-RGBD
                     mini_rgbd_joints = self._convert_to_mini_rgbd(results.pose_landmarks, width, height)
                     all_keypoints.append(
                         {
                             "frame": frames_processed,
-                            "landmarks": self._landmarks_to_list(results.pose_landmarks),
+                            "landmarks": landmarks_33,
                             "mini_rgbd": mini_rgbd_joints,
+                            "has_person": results.pose_landmarks is not None,
+                            "confidence": np.mean([lm["visibility"] for lm in landmarks_33]) if landmarks_33 else 0.0,
                         }
                     )
 
@@ -158,9 +162,20 @@ class VideoProcessor:
             "keypoints_count": len(all_keypoints),
         }
 
-    def _landmarks_to_list(self, pose_landmarks) -> Optional[List[Dict[str, float]]]:
+    def _landmarks_to_list(self, pose_landmarks) -> List[Dict[str, float]]:
+        """
+        Конвертирует MediaPipe landmarks в список словарей.
+        
+        Если pose_landmarks is None, возвращает список из 33 нулевых точек
+        для сохранения консистентности формата.
+        """
         if pose_landmarks is None:
-            return None
+            # Возвращаем список из 33 нулевых точек вместо None
+            return [
+                {"x": 0.0, "y": 0.0, "z": 0.0, "visibility": 0.0}
+                for _ in range(33)
+            ]
+        
         out: List[Dict[str, float]] = []
         for lm in pose_landmarks.landmark:
             out.append(
@@ -190,6 +205,47 @@ class VideoProcessor:
             return p1
         return ((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2, (p1[2] + p2[2]) / 2)
 
+    def _convert_to_mini_rgbd_from_list(
+        self, landmarks_33: List[Dict[str, float]], width: int, height: int
+    ) -> List[Tuple[float, float, float, float]]:
+        """
+        Конвертирует 33 точки MediaPipe (из списка словарей) в 25 точек MINI-RGBD формата.
+        
+        Args:
+            landmarks_33: Список из 33 словарей с ключами {"x", "y", "z", "visibility"}
+            width: Ширина изображения
+            height: Высота изображения
+        
+        Returns:
+            Список кортежей (x_pixel, y_pixel, depth_mm, joint_id) для 25 суставов MINI-RGBD
+        """
+        if not landmarks_33 or len(landmarks_33) != 33:
+            # Возвращаем нули для всех 25 суставов
+            return [(0.0, 0.0, 0.0, i) for i in range(25)]
+        
+        # Используем существующий метод через создание временного объекта landmarks
+        # Но проще использовать прямой маппинг
+        return self._convert_landmarks_list_to_mini_rgbd(landmarks_33, width, height)
+    
+    def _convert_landmarks_list_to_mini_rgbd(
+        self, landmarks_33: List[Dict[str, float]], width: int, height: int
+    ) -> List[Tuple[float, float, float, float]]:
+        """Конвертирует список landmarks в формат MINI-RGBD."""
+        # Используем существующую логику из _convert_to_mini_rgbd
+        # Создаем временный объект для совместимости
+        class TempLandmark:
+            def __init__(self, x, y, z):
+                self.x = x
+                self.y = y
+                self.z = z
+        
+        class TempLandmarks:
+            def __init__(self, landmarks_list):
+                self.landmark = [TempLandmark(lm["x"], lm["y"], lm["z"]) for lm in landmarks_list]
+        
+        temp_landmarks = TempLandmarks(landmarks_33)
+        return self._convert_to_mini_rgbd(temp_landmarks, width, height)
+    
     def _convert_to_mini_rgbd(self, pose_landmarks, width: int, height: int) -> List[Tuple[float, float, float, float]]:
         """
         Конвертировать MediaPipe Pose landmarks в формат MINI-RGBD (25 суставов).

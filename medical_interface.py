@@ -165,18 +165,24 @@ def analyze_baby_video(video_file, age_weeks=None, gestational_age_weeks=None) -
         # Создаем видео с наложенным скелетом
         skeleton_video_path = output_dir / "video_with_skeleton.mp4"
         try:
-            # Используем keypoints_list для создания видео с скелетом
-            create_skeleton_video_from_processed(
-                original_video_path,
-                keypoints_list,
-                skeleton_video_path,
-                errors=errors,
-                is_anomaly=is_anomaly,
-                threshold=_detector.threshold
-            )
-            logger.info(f"Видео с скелетом создано: {skeleton_video_path}")
+            # Проверяем, что keypoints_list не пустой
+            if not keypoints_list or len(keypoints_list) == 0:
+                logger.warning("keypoints_list пуст, невозможно создать видео с скелетом")
+                skeleton_video_path = None
+            else:
+                # Используем keypoints_list для создания видео с скелетом
+                logger.info(f"Создание видео с скелетом из {len(keypoints_list)} кадров с keypoints")
+                create_skeleton_video_from_processed(
+                    original_video_path,
+                    keypoints_list,
+                    skeleton_video_path,
+                    errors=errors,
+                    is_anomaly=is_anomaly,
+                    threshold=_detector.threshold
+                )
+                logger.info(f"Видео с скелетом создано: {skeleton_video_path}")
         except Exception as e:
-            logger.warning(f"Не удалось создать видео с скелетом: {e}")
+            logger.error(f"Не удалось создать видео с скелетом: {e}", exc_info=True)
             import traceback
             traceback.print_exc()
             skeleton_video_path = None
@@ -195,9 +201,29 @@ def analyze_baby_video(video_file, age_weeks=None, gestational_age_weeks=None) -
         report_text = format_medical_report(report)
         
         # Возвращаем путь к графику, видео с скелетом и отчет
+        # Для Gradio Video нужно использовать абсолютный путь
+        video_path_for_gradio = None
+        if skeleton_video_path and skeleton_video_path.exists():
+            # Проверяем размер файла
+            file_size = skeleton_video_path.stat().st_size
+            if file_size > 0:
+                video_path_for_gradio = str(skeleton_video_path.resolve())
+                logger.info(f"✅ Видео готово для отображения: {video_path_for_gradio} ({file_size / 1024 / 1024:.2f} MB)")
+            else:
+                logger.error(f"❌ Видео файл пуст: {skeleton_video_path}")
+        else:
+            logger.warning(f"❌ Видео не создано или не существует: {skeleton_video_path}")
+        
+        # Если видео не создано, возвращаем исходное видео как fallback
+        if video_path_for_gradio is None:
+            logger.warning("Видео с скелетом недоступно, используем исходное видео")
+            if original_video_path.exists():
+                video_path_for_gradio = str(original_video_path.resolve())
+                logger.info(f"Используется исходное видео: {video_path_for_gradio}")
+        
         return (
-            str(plot_path) if plot_path.exists() else None,
-            str(skeleton_video_path) if skeleton_video_path and skeleton_video_path.exists() else None,
+            str(plot_path.resolve()) if plot_path.exists() else None,
+            video_path_for_gradio,
             report_text
         )
     except Exception as e:

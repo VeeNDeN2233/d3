@@ -104,14 +104,17 @@ def process_video(
     keypoints_list = []
     for frame_data in keypoints_data["frames"]:
         landmarks = frame_data.get("landmarks")
-        if landmarks:
+        # Всегда возвращаем массив, даже если landmarks не обнаружены
+        if landmarks and len(landmarks) == 33:
             kp = np.array(
                 [[lm["x"], lm["y"], lm["z"], lm.get("visibility", 0.0)] for lm in landmarks],
                 dtype=np.float32,
             )
-            keypoints_list.append(kp)
         else:
-            keypoints_list.append(None)
+            # Заполняем нулями, если landmarks не обнаружены или неполные
+            kp = np.zeros((33, 4), dtype=np.float32)
+        
+        keypoints_list.append(kp)
     
     # Обрабатываем ключевые точки
     sequences = pose_processor.process_keypoints(keypoints_list)
