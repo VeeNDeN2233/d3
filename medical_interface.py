@@ -17,6 +17,18 @@ import yaml
 # Подавляем несущественные предупреждения asyncio на Windows
 warnings.filterwarnings("ignore", category=RuntimeWarning, module="asyncio")
 
+# Импорт системы аутентификации
+from auth.auth_manager import AuthManager
+
+# Импорт оптимизаций
+from utils.model_cache import get_model_cache
+from utils.performance_optimizer import (
+    cache_result,
+    optimize_memory,
+    batch_process,
+    get_performance_stats,
+)
+
 from inference_advanced import (
     generate_report as generate_medical_report,
     load_model_and_detector,
@@ -39,27 +51,42 @@ _config: Optional[dict] = None
 _video_processor: Optional[VideoProcessor] = None
 _pose_processor: Optional[PoseProcessor] = None
 
+# Менеджер аутентификации
+_auth_manager = AuthManager()
 
+
+@cache_result(max_size=1)
 def load_models(config_path: str = "config.yaml", checkpoint_path: str = "checkpoints/best_model_advanced.pt"):
-    """Загрузить модели один раз при старте."""
+    """Загрузить модели один раз при старте с кэшированием."""
     global _model, _detector, _config, _video_processor, _pose_processor
     
     if _model is not None:
         return "Модели уже загружены"
     
     try:
-        # Загружаем конфигурацию
-        with open(config_path, "r", encoding="utf-8") as f:
-            _config = yaml.safe_load(f)
-        
-        # Проверяем GPU
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        if device.type != "cuda":
-            return "Ошибка: GPU недоступен!"
-        
-        # Загружаем модель и детектор (улучшенная модель по умолчанию)
+        # Проверяем кэш моделей
+        model_cache = get_model_cache()
         checkpoint = Path(checkpoint_path)
-        _model, _detector = load_model_and_detector(checkpoint, _config, device, model_type="bidir_lstm")
+        
+        cached = model_cache.get(checkpoint, "bidir_lstm")
+        if cached is not None:
+            _model, _detector = cached
+            logger.info("Модели загружены из кэша")
+        else:
+            # Загружаем конфигурацию
+            with open(config_path, "r", encoding="utf-8") as f:
+                _config = yaml.safe_load(f)
+            
+            # Проверяем GPU
+            device = model_cache.get_device()
+            if device.type != "cuda":
+                return "Ошибка: GPU недоступен!"
+            
+            # Загружаем модель и детектор (улучшенная модель по умолчанию)
+            _model, _detector = load_model_and_detector(checkpoint, _config, device, model_type="bidir_lstm")
+            
+            # Сохраняем в кэш
+            model_cache.set(checkpoint, "bidir_lstm", _model, _detector)
         
         # Инициализация процессоров
         _video_processor = VideoProcessor(
@@ -84,7 +111,7 @@ def load_models(config_path: str = "config.yaml", checkpoint_path: str = "checkp
         return f"❌ Ошибка загрузки: {str(e)}"
 
 
-def analyze_baby_video(video_file, age_weeks=None, gestational_age_weeks=None) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+def analyze_baby_video(video_file, age_weeks=None, gestational_age_weeks=None, session_token_state=None) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """
     Основная функция анализа видео.
     
@@ -94,7 +121,14 @@ def analyze_baby_video(video_file, age_weeks=None, gestational_age_weeks=None) -
     Returns:
         Tuple (anomaly_plot_path, report_json)
     """
-    global _model, _detector, _config, _video_processor, _pose_processor
+    global _model, _detector, _config, _video_processor, _pose_processor, _auth_manager
+    
+    # Проверка аутентификации
+    session_token = session_token_state if session_token_state else None
+    auth_success, user_data, auth_message = _auth_manager.require_auth(session_token)
+    
+    if not auth_success:
+        return None, None, f"❌ {auth_message}\n\nПожалуйста, войдите в систему на вкладке '🔐 Вход/Регистрация'."
     
     if _model is None or _detector is None:
         return None, None, "❌ Ошибка: Модели не загружены!\n\nНажмите 'Загрузить модели' для инициализации системы."
@@ -247,6 +281,9 @@ def analyze_baby_video(video_file, age_weeks=None, gestational_age_weeks=None) -
                     logger.info(f"Используется исходное видео: {video_path_for_gradio}")
                 except Exception as e:
                     logger.error(f"Не удалось использовать исходное видео: {e}")
+        
+        # Очистка памяти после обработки
+        optimize_memory()
         
         return (
             str(plot_path.resolve()) if plot_path.exists() else None,
@@ -460,7 +497,7 @@ def format_medical_report(report: Dict) -> str:
 
 
 def create_medical_interface():
-    """Создать Gradio интерфейс."""
+    """Создать многостраничное Gradio приложение."""
     
     with gr.Blocks(title="GMA - Оценка общих движений") as interface:
         # Заголовок
@@ -473,113 +510,369 @@ def create_medical_interface():
             """
         )
         
-        # Основной контент в табах
-        with gr.Tabs() as tabs:
-            # Вкладка 1: Анализ
-            with gr.Tab("📊 Анализ видео"):
-                gr.Markdown("### Загрузка данных")
-                
-                with gr.Row():
-                    with gr.Column(scale=2):
-                        video_input = gr.File(
-                            label="Видео для анализа",
-                            file_types=[".mp4", ".avi", ".mov", ".mkv", ".webm"],
-                            file_count="single",
-                        )
-                    with gr.Column(scale=1):
-                        patient_age_weeks = gr.Number(
-                            label="Возраст (недели)",
-                            value=12,
-                            minimum=0,
-                            maximum=20,
-                            step=1,
-                        )
-                        gestational_age = gr.Number(
-                            label="Срок беременности (недели)",
-                            value=40,
-                            minimum=24,
-                            maximum=42,
-                            step=1,
-                        )
-                
-                analyze_btn = gr.Button(
-                    "🚀 Начать анализ",
-                    variant="primary",
-                    size="lg",
-                    scale=1
-                )
-                
-                gr.Markdown("---")
-                
-                # Результаты анализа
-                with gr.Row():
-                    with gr.Column(scale=1):
-                        gr.Markdown("### 📹 Видео с анализом")
-                        skeleton_video = gr.Video(
-                            label="Видео с наложенным скелетом",
-                            height=400
-                        )
-                    with gr.Column(scale=1):
-                        gr.Markdown("### 📈 График ошибки реконструкции")
-                        anomaly_plot = gr.Image(
-                            label="Динамика ошибки",
-                            height=400
-                        )
+        # Хранилище состояния
+        session_token_storage = gr.State(value=None)
+        is_authenticated = gr.State(value=False)
+        current_user_data = gr.State(value=None)
+        
+        # СТРАНИЦА 1: ВХОД/РЕГИСТРАЦИЯ (всегда видна)
+        with gr.Column(visible=True) as login_page:
+            gr.Markdown("## 🔐 Авторизация")
+            gr.Markdown("Для доступа к системе анализа необходимо войти в систему или зарегистрироваться.")
             
-            # Вкладка 2: Отчет
-            with gr.Tab("📄 Медицинский отчет"):
-                report_output = gr.Textbox(
-                    label="Результаты анализа",
-                    lines=30,
-                    max_lines=50,
-                    interactive=False,
-                )
+            with gr.Row():
+                # Левая колонка: Вход
+                with gr.Column(scale=1):
+                    gr.Markdown("### 🔑 Вход в систему")
+                    login_username = gr.Textbox(
+                        label="Имя пользователя",
+                        placeholder="Введите имя пользователя",
+                    )
+                    login_password = gr.Textbox(
+                        label="Пароль",
+                        type="password",
+                        placeholder="Введите пароль",
+                    )
+                    login_btn = gr.Button("Войти", variant="primary")
+                    login_status = gr.Markdown(visible=True, value="")
+                
+                # Правая колонка: Регистрация
+                with gr.Column(scale=1):
+                    gr.Markdown("### 📝 Регистрация")
+                    reg_username = gr.Textbox(
+                        label="Имя пользователя",
+                        placeholder="Минимум 3 символа",
+                    )
+                    reg_password = gr.Textbox(
+                        label="Пароль",
+                        type="password",
+                        placeholder="Минимум 6 символов",
+                    )
+                    reg_password_confirm = gr.Textbox(
+                        label="Подтверждение пароля",
+                        type="password",
+                        placeholder="Повторите пароль",
+                    )
+                    reg_email = gr.Textbox(
+                        label="Email (опционально)",
+                        placeholder="your@email.com",
+                    )
+                    reg_full_name = gr.Textbox(
+                        label="Полное имя (опционально)",
+                        placeholder="Иван Иванов",
+                    )
+                    register_btn = gr.Button("Зарегистрироваться", variant="secondary")
+                    reg_status = gr.Markdown(visible=True, value="")
+        
+        # СТРАНИЦА 2: ГЛАВНАЯ СТРАНИЦА С ФУНКЦИЯМИ (только для авторизованных)
+        with gr.Column(visible=False) as main_page:
+            # Информация о пользователе и выход
+            with gr.Row():
+                with gr.Column(scale=3):
+                    current_user_info = gr.Markdown(
+                        value="### 👤 Текущий пользователь\n\n*Загрузка...*",
+                    )
+                with gr.Column(scale=1):
+                    logout_btn = gr.Button("🚪 Выйти", variant="stop")
             
-            # Вкладка 3: Инструкции
-            with gr.Tab("ℹ️ Инструкции"):
-                gr.Markdown(
-                    """
-                    ### 📋 Инструкция по съемке видео для GMA
+            gr.Markdown("---")
+            
+            # Основной контент в табах
+            with gr.Tabs() as tabs:
+                # Вкладка 1: Анализ
+                with gr.Tab("📊 Анализ видео"):
+                    gr.Markdown("### Загрузка данных")
                     
-                    **Условия съемки:**
-                    - Ребенок лежит на спине, спокоен и внимателен
-                    - Легко одет (без носков)
-                    - Без сосок и игрушек
-                    - Родители рядом, но не взаимодействуют с ребенком
-                    - Съемка сверху, видны руки и ноги
-                    - Длительность: 1-3 минуты
-                    - Возраст: оптимально 12-14 недель после предполагаемой даты родов
+                    with gr.Row():
+                        with gr.Column(scale=2):
+                            video_input = gr.File(
+                                label="Видео для анализа",
+                                file_types=[".mp4", ".avi", ".mov", ".mkv", ".webm"],
+                                file_count="single",
+                            )
+                        with gr.Column(scale=1):
+                            patient_age_weeks = gr.Number(
+                                label="Возраст (недели)",
+                                value=12,
+                                minimum=0,
+                                maximum=20,
+                                step=1,
+                            )
+                            gestational_age = gr.Number(
+                                label="Срок беременности (недели)",
+                                value=40,
+                                minimum=24,
+                                maximum=42,
+                                step=1,
+                            )
                     
-                    ---
+                    analyze_btn = gr.Button(
+                        "🚀 Начать анализ",
+                        variant="primary",
+                        size="lg",
+                        scale=1
+                    )
                     
-                    ### 🔬 Методология
+                    gr.Markdown("---")
                     
-                    **Метод:** Анализ RGB-видео с использованием Bidirectional LSTM + Attention
-                    
-                    **Назначение:** Выявление ранних признаков церебрального паралича и других неврологических нарушений у младенцев (0-5 месяцев)
-                    
-                    **Точность:** Система обучена на данных MINI-RGBD (737 последовательностей здоровых младенцев)
-                    
-                    ---
-                    
-                    ### ⚠️ Важно
-                    
-                    - Система предназначена для **вспомогательной диагностики**
-                    - Результаты **не заменяют** консультацию специалиста
-                    - При обнаружении аномалий рекомендуется обратиться к врачу
-                    """
+                    # Результаты анализа
+                    with gr.Row():
+                        with gr.Column(scale=1):
+                            gr.Markdown("### 📹 Видео с анализом")
+                            skeleton_video = gr.Video(
+                                label="Видео с наложенным скелетом",
+                                height=400
+                            )
+                        with gr.Column(scale=1):
+                            gr.Markdown("### 📈 График ошибки реконструкции")
+                            anomaly_plot = gr.Image(
+                                label="Динамика ошибки",
+                                height=400
+                            )
+                
+                # Вкладка 2: Отчет
+                with gr.Tab("📄 Медицинский отчет"):
+                    report_output = gr.Textbox(
+                        label="Результаты анализа",
+                        lines=30,
+                        max_lines=50,
+                        interactive=False,
+                    )
+                
+                # Вкладка 3: Инструкции
+                with gr.Tab("ℹ️ Инструкции"):
+                    gr.Markdown(
+                        """
+                        ### 📋 Инструкция по съемке видео для GMA
+                        
+                        **Условия съемки:**
+                        - Ребенок лежит на спине, спокоен и внимателен
+                        - Легко одет (без носков)
+                        - Без сосок и игрушек
+                        - Родители рядом, но не взаимодействуют с ребенком
+                        - Съемка сверху, видны руки и ноги
+                        - Длительность: 1-3 минуты
+                        - Возраст: оптимально 12-14 недель после предполагаемой даты родов
+                        
+                        ---
+                        
+                        ### 🔬 Методология
+                        
+                        **Метод:** Анализ RGB-видео с использованием Bidirectional LSTM + Attention
+                        
+                        **Назначение:** Выявление ранних признаков церебрального паралича и других неврологических нарушений у младенцев (0-5 месяцев)
+                        
+                        **Точность:** Система обучена на данных MINI-RGBD (737 последовательностей здоровых младенцев)
+                        
+                        ---
+                        
+                        ### ⚠️ Важно
+                        
+                        - Система предназначена для **вспомогательной диагностики**
+                        - Результаты **не заменяют** консультацию специалиста
+                        - При обнаружении аномалий рекомендуется обратиться к врачу
+                        """
+                    )
+            
+            # Индикатор статуса загрузки моделей (только на главной странице)
+            gr.Markdown("---")
+            with gr.Row():
+                model_status = gr.Markdown(
+                    value="⏳ **Инициализация системы...** Загрузка моделей при старте.",
+                    visible=True,
                 )
         
-        # Индикатор статуса загрузки моделей
-        with gr.Row():
-            model_status = gr.Markdown(
-                value="⏳ **Инициализация системы...** Загрузка моделей при старте.",
-                visible=True,
+        # Функции аутентификации
+        def handle_login(username: str, password: str, current_token, current_auth, current_user) -> Tuple[str, str, bool, Optional[str], bool, Optional[Dict], gr.update, gr.update, str]:
+            """Обработка входа пользователя."""
+            if not username or not password:
+                return (
+                    "❌ Заполните все поля",
+                    "### 👤 Текущий пользователь\n\n*Не авторизован*",
+                    False,
+                    current_token,
+                    False,
+                    None,
+                    gr.update(visible=True),  # login_page
+                    gr.update(visible=False),  # main_page
+                    "⏳ **Ожидание авторизации...**"
+                )
+            
+            success, message, session_token, user_data = _auth_manager.login(username, password)
+            
+            if success:
+                user_info = f"### 👤 Текущий пользователь\n\n**Имя:** {user_data['username']}\n"
+                if user_data.get('full_name'):
+                    user_info += f"**Полное имя:** {user_data['full_name']}\n"
+                if user_data.get('email'):
+                    user_info += f"**Email:** {user_data['email']}\n"
+                user_info += f"**Роль:** {user_data.get('role', 'user')}\n\n✅ Вы успешно вошли в систему"
+                
+                # Загружаем модели при успешном входе
+                model_status_text = load_models_and_update_status()
+                
+                return (
+                    f"✅ {message}",
+                    user_info,
+                    True,
+                    session_token,
+                    True,
+                    user_data,
+                    gr.update(visible=False),  # Скрыть страницу входа
+                    gr.update(visible=True),    # Показать главную страницу
+                    model_status_text
+                )
+            else:
+                return (
+                    f"❌ {message}",
+                    "### 👤 Текущий пользователь\n\n*Не авторизован*",
+                    False,
+                    current_token,
+                    False,
+                    None,
+                    gr.update(visible=True),   # Показать страницу входа
+                    gr.update(visible=False),   # Скрыть главную страницу
+                    "⏳ **Ожидание авторизации...**"
+                )
+        
+        def handle_register(
+            username: str,
+            password: str,
+            password_confirm: str,
+            email: str,
+            full_name: str,
+            current_token,
+            current_auth,
+            current_user
+        ) -> Tuple[str, str, bool, Optional[str], bool, Optional[Dict], gr.update, gr.update, str]:
+            """Обработка регистрации пользователя."""
+            if not username or not password:
+                return (
+                    "❌ Заполните имя пользователя и пароль",
+                    "### 👤 Текущий пользователь\n\n*Не авторизован*",
+                    False,
+                    current_token,
+                    False,
+                    None,
+                    gr.update(visible=True),
+                    gr.update(visible=False),
+                    "⏳ **Ожидание авторизации...**"
+                )
+            
+            if password != password_confirm:
+                return (
+                    "❌ Пароли не совпадают",
+                    "### 👤 Текущий пользователь\n\n*Не авторизован*",
+                    False,
+                    current_token,
+                    False,
+                    None,
+                    gr.update(visible=True),
+                    gr.update(visible=False),
+                    "⏳ **Ожидание авторизации...**"
+                )
+            
+            success, message, session_token = _auth_manager.register(
+                username, password, email if email else None, full_name if full_name else None
+            )
+            
+            if success and session_token:
+                # Получаем данные пользователя для отображения
+                auth_success, user_data, _ = _auth_manager.require_auth(session_token)
+                if auth_success:
+                    user_info = f"### 👤 Текущий пользователь\n\n**Имя:** {user_data['username']}\n"
+                    if user_data.get('full_name'):
+                        user_info += f"**Полное имя:** {user_data['full_name']}\n"
+                    if user_data.get('email'):
+                        user_info += f"**Email:** {user_data['email']}\n"
+                    user_info += f"**Роль:** {user_data.get('role', 'user')}\n\n✅ Регистрация успешна! Вы автоматически вошли в систему"
+                    
+                    # Загружаем модели при успешной регистрации
+                    model_status_text = load_models_and_update_status()
+                    
+                    return (
+                        f"✅ {message}",
+                        user_info,
+                        True,
+                        session_token,
+                        True,
+                        user_data,
+                        gr.update(visible=False),  # Скрыть страницу входа
+                        gr.update(visible=True),    # Показать главную страницу
+                        model_status_text
+                    )
+            
+            return (
+                f"❌ {message}",
+                "### 👤 Текущий пользователь\n\n*Не авторизован*",
+                False,
+                current_token,
+                False,
+                None,
+                gr.update(visible=True),
+                gr.update(visible=False),
+                "⏳ **Ожидание авторизации...**"
             )
         
-        # Автоматическая загрузка моделей при старте
+        def handle_logout(current_token, current_auth, current_user) -> Tuple[str, bool, Optional[str], bool, Optional[Dict], gr.update, gr.update, str]:
+            """Обработка выхода пользователя."""
+            if current_token:
+                _auth_manager.logout(current_token)
+            return (
+                "### 👤 Текущий пользователь\n\n*Не авторизован*",
+                False,
+                None,
+                False,
+                None,
+                gr.update(visible=True),   # Показать страницу входа
+                gr.update(visible=False),    # Скрыть главную страницу
+                "⏳ **Ожидание авторизации...**"
+            )
+        
+        def check_auth_status(current_token) -> Tuple[str, bool, Optional[str], bool, Optional[Dict], gr.update, gr.update, str]:
+            """Проверка статуса авторизации при загрузке страницы."""
+            user_data = _auth_manager.get_user_from_session(current_token)
+            
+            if user_data:
+                user_info = f"### 👤 Текущий пользователь\n\n**Имя:** {user_data['username']}\n"
+                if user_data.get('full_name'):
+                    user_info += f"**Полное имя:** {user_data['full_name']}\n"
+                if user_data.get('email'):
+                    user_info += f"**Email:** {user_data['email']}\n"
+                user_info += f"**Роль:** {user_data.get('role', 'user')}"
+                
+                # Загружаем модели если пользователь авторизован
+                model_status_text = load_models_and_update_status()
+                
+                return (
+                    user_info,
+                    True,
+                    current_token,
+                    True,
+                    user_data,
+                    gr.update(visible=False),  # Скрыть страницу входа
+                    gr.update(visible=True),    # Показать главную страницу
+                    model_status_text
+                )
+            else:
+                return (
+                    "### 👤 Текущий пользователь\n\n*Не авторизован*",
+                    False,
+                    None,
+                    False,
+                    None,
+                    gr.update(visible=True),   # Показать страницу входа
+                    gr.update(visible=False),    # Скрыть главную страницу
+                    "⏳ **Ожидание авторизации...**"
+                )
+        
+        # Обработчики событий аутентификации
+        # Автоматическая загрузка моделей при старте (только для авторизованных)
         def load_models_and_update_status():
             """Загрузить модели и обновить статус."""
+            # Очистка памяти перед загрузкой
+            optimize_memory()
+            
             status = load_models()
             # Форматируем статус для Markdown
             if "✅" in status:
@@ -590,15 +883,91 @@ def create_medical_interface():
                 status_html = f"### ⏳ **{status}**"
             return status_html
         
-        interface.load(
-            fn=load_models_and_update_status,
-            outputs=model_status,
+        # Периодическая очистка сессий (каждые 24 часа)
+        def periodic_cleanup():
+            """Периодическая очистка истекших сессий."""
+            import time
+            while True:
+                try:
+                    time.sleep(86400)  # 24 часа
+                    _auth_manager.cleanup()
+                    logger.info("Периодическая очистка сессий выполнена")
+                except Exception as e:
+                    logger.error(f"Ошибка при очистке сессий: {e}")
+        
+        # Запускаем периодическую очистку в фоновом потоке
+        import threading
+        cleanup_thread = threading.Thread(target=periodic_cleanup, daemon=True)
+        cleanup_thread.start()
+        
+        # Обработчики событий аутентификации
+        login_btn.click(
+            fn=handle_login,
+            inputs=[login_username, login_password, session_token_storage, is_authenticated, current_user_data],
+            outputs=[
+                login_status,
+                current_user_info,
+                is_authenticated,
+                session_token_storage,
+                is_authenticated,
+                current_user_data,
+                login_page,
+                main_page,
+                model_status
+            ],
         )
         
-        # Обработчики событий
+        register_btn.click(
+            fn=handle_register,
+            inputs=[reg_username, reg_password, reg_password_confirm, reg_email, reg_full_name, session_token_storage, is_authenticated, current_user_data],
+            outputs=[
+                reg_status,
+                current_user_info,
+                is_authenticated,
+                session_token_storage,
+                is_authenticated,
+                current_user_data,
+                login_page,
+                main_page,
+                model_status
+            ],
+        )
+        
+        logout_btn.click(
+            fn=handle_logout,
+            inputs=[session_token_storage, is_authenticated, current_user_data],
+            outputs=[
+                current_user_info,
+                is_authenticated,
+                session_token_storage,
+                is_authenticated,
+                current_user_data,
+                login_page,
+                main_page,
+                model_status
+            ],
+        )
+        
+        # Проверка статуса при загрузке интерфейса
+        interface.load(
+            fn=check_auth_status,
+            inputs=[session_token_storage],
+            outputs=[
+                current_user_info,
+                is_authenticated,
+                session_token_storage,
+                is_authenticated,
+                current_user_data,
+                login_page,
+                main_page,
+                model_status
+            ],
+        )
+        
+        # Обработчики событий (только для авторизованных)
         analyze_btn.click(
             fn=analyze_baby_video,
-            inputs=[video_input, patient_age_weeks, gestational_age],
+            inputs=[video_input, patient_age_weeks, gestational_age, session_token_storage],
             outputs=[anomaly_plot, skeleton_video, report_output],
         )
     
@@ -635,6 +1004,8 @@ if __name__ == "__main__":
             quiet=False,
             theme=gr.themes.Soft()
         )
+    except KeyboardInterrupt:
+        logger.info("Сервер остановлен пользователем")
     except Exception as e:
         logger.error(f"Ошибка запуска сервера: {e}")
         raise

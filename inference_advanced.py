@@ -57,7 +57,7 @@ def load_model_and_detector(
         raise ValueError(f"Модель {model_type} не поддерживается")
     
     # Загружаем веса
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
     
@@ -123,9 +123,11 @@ def process_video(
         logger.warning("Нет валидных последовательностей")
         return keypoints_list, [], []
     
-    # Преобразуем в плоские векторы
-    flattened_sequences = [pose_processor.flatten_sequence(seq) for seq in sequences]
-    sequences_array = np.array(flattened_sequences)  # (N, 30, 75)
+    # Преобразуем в плоские векторы (оптимизировано)
+    flattened_sequences = []
+    for seq in sequences:
+        flattened_sequences.append(pose_processor.flatten_sequence(seq))
+    sequences_array = np.array(flattened_sequences, dtype=np.float32)  # (N, 30, 75)
     sequences_tensor = torch.FloatTensor(sequences_array)
     
     # Предсказание аномалий

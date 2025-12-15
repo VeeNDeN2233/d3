@@ -233,7 +233,7 @@ class AnomalyDetector:
         if not load_path.exists():
             raise FileNotFoundError(f"Файл не найден: {load_path}")
         
-        checkpoint = torch.load(load_path, map_location=device)
+        checkpoint = torch.load(load_path, map_location=device, weights_only=False)
         
         # Загружаем веса модели
         model.load_state_dict(checkpoint["model_state_dict"])
