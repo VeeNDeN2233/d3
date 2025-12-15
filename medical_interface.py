@@ -19,6 +19,7 @@ from inference_advanced import (
     process_video,
     visualize_results,
 )
+from utils.video_visualizer import create_skeleton_video_from_processed
 from models.anomaly_detector import AnomalyDetector
 from models.autoencoder_advanced import BidirectionalLSTMAutoencoder
 from utils.pose_processor import PoseProcessor
@@ -79,7 +80,7 @@ def load_models(config_path: str = "config.yaml", checkpoint_path: str = "checkp
         return f"❌ Ошибка загрузки: {str(e)}"
 
 
-def analyze_baby_video(video_file, age_weeks=None, gestational_age_weeks=None) -> Tuple[Optional[str], Optional[str]]:
+def analyze_baby_video(video_file, age_weeks=None, gestational_age_weeks=None) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """
     Основная функция анализа видео.
     
@@ -92,11 +93,11 @@ def analyze_baby_video(video_file, age_weeks=None, gestational_age_weeks=None) -
     global _model, _detector, _config, _video_processor, _pose_processor
     
     if _model is None or _detector is None:
-        return None, "❌ Ошибка: Модели не загружены!\n\nНажмите 'Загрузить модели' для инициализации системы."
+        return None, None, "❌ Ошибка: Модели не загружены!\n\nНажмите 'Загрузить модели' для инициализации системы."
     
     try:
         if video_file is None:
-            return None, "❌ Ошибка: Видео не загружено!\n\nПожалуйста, загрузите видео файл перед анализом."
+            return None, None, "❌ Ошибка: Видео не загружено!\n\nПожалуйста, загрузите видео файл перед анализом."
         
         # Обработка разных типов входных данных от Gradio
         logger.info(f"Получен video_file типа: {type(video_file)}")
@@ -114,7 +115,7 @@ def analyze_baby_video(video_file, age_weeks=None, gestational_age_weeks=None) -
             if len(video_file) > 0:
                 video_file = video_file[0]
             else:
-                return None, "❌ Ошибка: Список файлов пуст!"
+                return None, None, "❌ Ошибка: Список файлов пуст!"
         
         # Получаем путь к файлу
         if hasattr(video_file, 'name'):
@@ -131,7 +132,7 @@ def analyze_baby_video(video_file, age_weeks=None, gestational_age_weeks=None) -
             logger.info(f"Файл преобразован в строку: {actual_path}")
         
         if not actual_path or actual_path == "None":
-            return None, "❌ Ошибка: Не удалось определить путь к файлу!\n\nПопробуйте загрузить видео снова."
+            return None, None, "❌ Ошибка: Не удалось определить путь к файлу!\n\nПопробуйте загрузить видео снова."
         
         # Нормализуем путь (исправляем обратные слэши на Windows)
         actual_path = Path(actual_path).resolve()
@@ -140,13 +141,16 @@ def analyze_baby_video(video_file, age_weeks=None, gestational_age_weeks=None) -
         # Проверяем существование файла
         if not actual_path.exists():
             logger.error(f"Файл не существует: {actual_path}")
-            return None, f"❌ Ошибка: Файл не найден!\n\nПуть: {actual_path}\n\nПопробуйте загрузить видео снова."
+            return None, None, f"❌ Ошибка: Файл не найден!\n\nПуть: {actual_path}\n\nПопробуйте загрузить видео снова."
         
         if not actual_path.is_file():
             logger.error(f"Путь не является файлом: {actual_path}")
-            return None, f"❌ Ошибка: Указанный путь не является файлом!\n\nПуть: {actual_path}"
+            return None, None, f"❌ Ошибка: Указанный путь не является файлом!\n\nПуть: {actual_path}"
         
         # Обработка видео
+        # Сохраняем путь к исходному видео для создания видео с скелетом
+        original_video_path = actual_path
+        
         keypoints_list, errors, is_anomaly, sequences_array = process_video(
             actual_path, _video_processor, _pose_processor, _detector, _config
         )
@@ -157,6 +161,25 @@ def analyze_baby_video(video_file, age_weeks=None, gestational_age_weeks=None) -
         
         # Визуализация
         visualize_results(errors, is_anomaly, output_dir, actual_path.stem, _detector.threshold)
+        
+        # Создаем видео с наложенным скелетом
+        skeleton_video_path = output_dir / "video_with_skeleton.mp4"
+        try:
+            # Используем keypoints_list для создания видео с скелетом
+            create_skeleton_video_from_processed(
+                original_video_path,
+                keypoints_list,
+                skeleton_video_path,
+                errors=errors,
+                is_anomaly=is_anomaly,
+                threshold=_detector.threshold
+            )
+            logger.info(f"Видео с скелетом создано: {skeleton_video_path}")
+        except Exception as e:
+            logger.warning(f"Не удалось создать видео с скелетом: {e}")
+            import traceback
+            traceback.print_exc()
+            skeleton_video_path = None
         
         # Генерация медицинского отчета с детальным анализом
         report = generate_medical_report(
@@ -171,10 +194,11 @@ def analyze_baby_video(video_file, age_weeks=None, gestational_age_weeks=None) -
         # Форматирование отчета для отображения
         report_text = format_medical_report(report)
         
-        # Возвращаем путь к графику аномалий и отчет
+        # Возвращаем путь к графику, видео с скелетом и отчет
         return (
             str(plot_path) if plot_path.exists() else None,
-            report_text,
+            str(skeleton_video_path) if skeleton_video_path and skeleton_video_path.exists() else None,
+            report_text
         )
     except Exception as e:
         logger.error(f"Ошибка анализа: {e}", exc_info=True)
@@ -184,7 +208,7 @@ def analyze_baby_video(video_file, age_weeks=None, gestational_age_weeks=None) -
         error_msg += "1. Видео файл загружен корректно\n"
         error_msg += "2. Модели загружены (нажмите 'Загрузить модели')\n"
         error_msg += "3. Формат видео поддерживается\n"
-        return None, error_msg
+        return None, None, error_msg
 
 
 def format_medical_report(report: Dict) -> str:
@@ -385,121 +409,144 @@ def format_medical_report(report: Dict) -> str:
 def create_medical_interface():
     """Создать Gradio интерфейс."""
     
-    with gr.Blocks(title="Оценка общих движений (GMA) - Детектор аномалий") as interface:
+    with gr.Blocks(title="GMA - Оценка общих движений") as interface:
+        # Заголовок
         gr.Markdown(
             """
-            # 🍼 Оценка общих движений (General Movements Assessment)
-            
-            ### Автоматизированная система для раннего выявления риска двигательных нарушений
-            
-            **Метод:** Анализ RGB-видео с использованием Bidirectional LSTM + Attention
-            
-            **Назначение:** Выявление ранних признаков церебрального паралича и других неврологических нарушений у младенцев (0-5 месяцев)
-            
-            ---
-            
-            **📋 Инструкция по съемке видео для GMA:**
-            - Ребенок лежит на спине, спокоен и внимателен
-            - Легко одет (без носков)
-            - Без сосок и игрушек
-            - Родители рядом, но не взаимодействуют с ребенком
-            - Съемка сверху, видны руки и ноги
-            - Длительность: 1-3 минуты
-            - Возраст: оптимально 12-14 недель после предполагаемой даты родов
+            <div style="text-align: center; padding: 20px;">
+                <h1 style="margin-bottom: 10px;">🍼 General Movements Assessment</h1>
+                <p style="color: #666; font-size: 16px;">Автоматизированная система для раннего выявления риска двигательных нарушений</p>
+            </div>
             """
         )
         
-        with gr.Row():
-            with gr.Column(scale=1):
-                gr.Markdown("### 📋 Шаг 1: Инициализация системы")
-                model_status = gr.Textbox(
-                    label="Статус моделей",
-                    value="⏳ Нажмите 'Загрузить модели' для инициализации системы",
-                    interactive=False,
-                    lines=3,
-                )
-                load_models_btn = gr.Button(
-                    "🔄 Загрузить модели", 
-                    variant="primary",
-                    size="lg"
-                )
-            
-            with gr.Column(scale=1):
-                gr.Markdown("### 📹 Шаг 2: Загрузка видео и данные пациента")
-                video_input = gr.File(
-                    label="Видео для GMA оценки",
-                    file_types=[".mp4", ".avi", ".mov", ".mkv", ".webm"],
-                    file_count="single",
-                    height=80,
-                )
+        # Основной контент в табах
+        with gr.Tabs() as tabs:
+            # Вкладка 1: Анализ
+            with gr.Tab("📊 Анализ видео"):
+                gr.Markdown("### Загрузка данных")
                 
                 with gr.Row():
-                    patient_age_weeks = gr.Number(
-                        label="Возраст ребенка (недели после родов)",
-                        value=12,
-                        minimum=0,
-                        maximum=20,
-                        step=1,
-                        info="Оптимально: 12-14 недель"
-                    )
-                    gestational_age = gr.Number(
-                        label="Срок беременности при рождении (недели)",
-                        value=40,
-                        minimum=24,
-                        maximum=42,
-                        step=1,
-                        info="Для недоношенных детей"
-                    )
-        
-        gr.Markdown("---")
-        
-        with gr.Row():
-            analyze_btn = gr.Button(
-                "🚀 Начать GMA анализ", 
-                variant="primary",
-                size="lg",
-                scale=1
-            )
-        
-        gr.Markdown("---")
-        
-        with gr.Row():
-            with gr.Column():
-                gr.Markdown("### 📊 График ошибки реконструкции")
-                anomaly_plot = gr.Image(
-                    label="График аномалий",
-                    height=400
+                    with gr.Column(scale=2):
+                        video_input = gr.File(
+                            label="Видео для анализа",
+                            file_types=[".mp4", ".avi", ".mov", ".mkv", ".webm"],
+                            file_count="single",
+                        )
+                    with gr.Column(scale=1):
+                        patient_age_weeks = gr.Number(
+                            label="Возраст (недели)",
+                            value=12,
+                            minimum=0,
+                            maximum=20,
+                            step=1,
+                        )
+                        gestational_age = gr.Number(
+                            label="Срок беременности (недели)",
+                            value=40,
+                            minimum=24,
+                            maximum=42,
+                            step=1,
+                        )
+                
+                analyze_btn = gr.Button(
+                    "🚀 Начать анализ",
+                    variant="primary",
+                    size="lg",
+                    scale=1
                 )
+                
+                gr.Markdown("---")
+                
+                # Результаты анализа
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        gr.Markdown("### 📹 Видео с анализом")
+                        skeleton_video = gr.Video(
+                            label="Видео с наложенным скелетом",
+                            height=400
+                        )
+                    with gr.Column(scale=1):
+                        gr.Markdown("### 📈 График ошибки реконструкции")
+                        anomaly_plot = gr.Image(
+                            label="Динамика ошибки",
+                            height=400
+                        )
             
-            with gr.Column():
-                gr.Markdown("### 📄 Медицинский отчет")
+            # Вкладка 2: Отчет
+            with gr.Tab("📄 Медицинский отчет"):
                 report_output = gr.Textbox(
                     label="Результаты анализа",
-                    lines=25,
-                    max_lines=30,
+                    lines=30,
+                    max_lines=50,
                     interactive=False,
                 )
+            
+            # Вкладка 3: Инструкции
+            with gr.Tab("ℹ️ Инструкции"):
+                gr.Markdown(
+                    """
+                    ### 📋 Инструкция по съемке видео для GMA
+                    
+                    **Условия съемки:**
+                    - Ребенок лежит на спине, спокоен и внимателен
+                    - Легко одет (без носков)
+                    - Без сосок и игрушек
+                    - Родители рядом, но не взаимодействуют с ребенком
+                    - Съемка сверху, видны руки и ноги
+                    - Длительность: 1-3 минуты
+                    - Возраст: оптимально 12-14 недель после предполагаемой даты родов
+                    
+                    ---
+                    
+                    ### 🔬 Методология
+                    
+                    **Метод:** Анализ RGB-видео с использованием Bidirectional LSTM + Attention
+                    
+                    **Назначение:** Выявление ранних признаков церебрального паралича и других неврологических нарушений у младенцев (0-5 месяцев)
+                    
+                    **Точность:** Система обучена на данных MINI-RGBD (737 последовательностей здоровых младенцев)
+                    
+                    ---
+                    
+                    ### ⚠️ Важно
+                    
+                    - Система предназначена для **вспомогательной диагностики**
+                    - Результаты **не заменяют** консультацию специалиста
+                    - При обнаружении аномалий рекомендуется обратиться к врачу
+                    """
+                )
         
-        # Обработчики событий
-        load_models_btn.click(
-            fn=load_models,
+        # Индикатор статуса загрузки моделей
+        with gr.Row():
+            model_status = gr.Markdown(
+                value="⏳ **Инициализация системы...** Загрузка моделей при старте.",
+                visible=True,
+            )
+        
+        # Автоматическая загрузка моделей при старте
+        def load_models_and_update_status():
+            """Загрузить модели и обновить статус."""
+            status = load_models()
+            # Форматируем статус для Markdown
+            if "✅" in status:
+                status_html = f"### ✅ **Система готова**\n\n{status.replace('✅ ', '')}"
+            elif "❌" in status:
+                status_html = f"### ❌ **Ошибка загрузки**\n\n{status.replace('❌ ', '')}"
+            else:
+                status_html = f"### ⏳ **{status}**"
+            return status_html
+        
+        interface.load(
+            fn=load_models_and_update_status,
             outputs=model_status,
         )
         
+        # Обработчики событий
         analyze_btn.click(
             fn=analyze_baby_video,
-            inputs=[video_input, patient_age_weeks, gestational_age],  # Добавляем данные пациента
-            outputs=[anomaly_plot, report_output],
-        )
-        
-        gr.Markdown(
-            """
-            ---
-            **Важно:** 
-            - Система предназначена для вспомогательной диагностики
-            - Результаты не заменяют консультацию специалиста
-            - При обнаружении аномалий рекомендуется обратиться к врачу
-            """
+            inputs=[video_input, patient_age_weeks, gestational_age],
+            outputs=[anomaly_plot, skeleton_video, report_output],
         )
     
     return interface
