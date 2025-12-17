@@ -32,6 +32,14 @@ seaborn>=0.12.0
 # Medical Interface
 gradio>=4.0.0
 
+# Web Framework (Flask для многостраничности)
+flask>=3.0.0
+flask-session>=0.5.0
+werkzeug>=3.0.0
+
+# Security
+bcrypt>=4.0.0  # Безопасное хэширование паролей
+
 # Оптимизация (опционально)
 # psutil>=5.9.0  # Для мониторинга ресурсов
 # memory-profiler>=0.61.0  # Для профилирования памяти

@@ -34,6 +34,8 @@ from core.state_manager import AnalysisParameters
 from utils.gradio_helpers import create_status_message, create_progress_html
 from utils.analysis_cache import AnalysisCache
 from utils.gradio_state_adapter import GradioStateAdapter
+from utils.ui_state_manager import UIStateManager
+from utils.dom_controller import get_dom_controller_js
 import threading
 
 # Импорт оптимизаций
@@ -79,6 +81,7 @@ _cancel_event: Optional[threading.Event] = None
 _analysis_cache = AnalysisCache()
 _gradio_state_adapter = GradioStateAdapter(_state_manager)
 _step_manager = StepManager(_state_manager)
+_ui_state_manager = UIStateManager(_state_manager)
 
 # Флаг для lazy loading моделей
 _models_loading = False
@@ -141,6 +144,13 @@ def load_models_lazy(config_path: str = "config.yaml", checkpoint_path: str = "c
             # Загружаем модель и детектор
             _model, _detector = load_model_and_detector(checkpoint, _config, device, model_type="bidir_lstm")
             
+            # Логируем информацию об устройстве
+            logger.info(f"✅ Основная модель загружена на устройство: {device}")
+            if device.type == "cuda":
+                logger.info(f"   GPU: {torch.cuda.get_device_name(0)}")
+                logger.info(f"   Память GPU: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
+            logger.info("ℹ️  MediaPipe Pose работает на CPU (это нормально и быстро)")
+            
             # Сохраняем в кэш
             model_cache.set(checkpoint, "bidir_lstm", _model, _detector)
         
@@ -161,7 +171,8 @@ def load_models_lazy(config_path: str = "config.yaml", checkpoint_path: str = "c
             rotate_to_canonical=_config["pose"].get("rotate_to_canonical", False),
         )
         
-        status_msg = f"Модели загружены успешно. (Bidirectional LSTM + Attention)\nGPU: {torch.cuda.get_device_name(0)}\nПорог: {_detector.threshold:.6f}"
+        device_name = torch.cuda.get_device_name(0) if device.type == "cuda" else "CPU"
+        status_msg = f"Модели загружены успешно. (Bidirectional LSTM + Attention)\nУстройство: {device_name}\nПорог: {_detector.threshold:.6f}\n\nПримечание: MediaPipe Pose работает на CPU (это нормально)"
         _state_manager.update_models(is_loaded=True, status_message=status_msg)
         
         return status_msg
@@ -603,6 +614,39 @@ def create_medical_interface():
     
     # Клинический CSS для медицинского интерфейса
     custom_css = """
+    /* Скрытие страницы входа, когда header виден (пользователь авторизован) */
+    body:has(.header-panel) .gr-column:has(button:contains("Войти в систему")),
+    body:has(.header-panel) .gr-column:has(input[type="password"][placeholder*="пароль" i]),
+    body:has(.header-panel) .gr-column:has(input[type="password"][placeholder*="password" i]) {
+        display: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+        height: 0 !important;
+        overflow: hidden !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        pointer-events: none !important;
+    }
+    
+    /* Скрытие кнопки "Войти в систему", если header виден */
+    body:has(.header-panel) button:contains("Войти в систему"),
+    .header-panel ~ * button:contains("Войти в систему"),
+    button:contains("Войти в систему"):has(+ .header-panel) {
+        display: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+        height: 0 !important;
+        width: 0 !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        pointer-events: none !important;
+    }
+    
+    /* Более агрессивное скрытие - по наличию email в header */
+    .header-panel:has(span:contains("@")) ~ * .gr-column:has(button:contains("Войти в систему")) {
+        display: none !important;
+    }
+    
     /* Базовые стили */
     * {
         box-sizing: border-box !important;
@@ -1361,7 +1405,184 @@ def create_medical_interface():
     }
     """
     
+    # JavaScript для скрытия страницы входа и оборачивания полей в формы
+    js_hide_login_if_authenticated = """
+    <script>
+    (function() {
+        // Функция для оборачивания полей пароля в формы
+        function wrapPasswordFieldsInForms() {
+            // Находим все группы с полями пароля
+            const groups = document.querySelectorAll('.gr-group');
+            groups.forEach((group, index) => {
+                const passwordField = group.querySelector('input[type="password"]');
+                if (passwordField && !passwordField.closest('form') && !passwordField.hasAttribute('form')) {
+                    // Создаем форму с уникальным id
+                    const formId = 'auth-form-' + index;
+                    let form = document.getElementById(formId);
+                    
+                    if (!form) {
+                        form = document.createElement('form');
+                        form.id = formId;
+                        form.setAttribute('onsubmit', 'return false;');
+                        form.setAttribute('method', 'post');
+                        form.setAttribute('autocomplete', 'on');
+                        form.style.position = 'relative';
+                        form.style.display = 'block';
+                        
+                        // Вставляем форму как обертку группы
+                        const parent = group.parentNode;
+                        parent.insertBefore(form, group);
+                        form.appendChild(group);
+                    }
+                    
+                    // Добавляем атрибут form ко всем полям в группе
+                    const allInputs = group.querySelectorAll('input, button');
+                    allInputs.forEach(field => {
+                        if (!field.hasAttribute('form')) {
+                            field.setAttribute('form', formId);
+                        }
+                    });
+                }
+            });
+        }
+        
+        function hideLoginPage() {
+            // Проверяем, есть ли header с email (признак авторизации)
+            const headerPanel = document.querySelector('.header-panel');
+            const hasHeader = headerPanel && headerPanel.offsetParent !== null && 
+                            headerPanel.textContent.includes('@');
+            
+            if (hasHeader) {
+                // Header виден - пользователь авторизован, скрываем страницу входа
+                // Ищем все элементы с текстом "Войти в систему"
+                const allElements = document.querySelectorAll('*');
+                allElements.forEach(el => {
+                    if (el.textContent && el.textContent.includes('Войти в систему')) {
+                        // Находим родительский Column (страницу входа)
+                        let column = el.closest('.gr-column');
+                        if (column) {
+                            // Проверяем, что это действительно страница входа
+                            const hasLoginForm = column.querySelector('input[type="password"]') || 
+                                              column.textContent.includes('Email') ||
+                                              column.textContent.includes('Пароль');
+                            if (hasLoginForm) {
+                                column.style.display = 'none';
+                                column.style.visibility = 'hidden';
+                                column.style.opacity = '0';
+                                column.style.height = '0';
+                                column.style.overflow = 'hidden';
+                                column.style.pointerEvents = 'none';
+                                column.setAttribute('aria-hidden', 'true');
+                                
+                                // Также скрываем все кнопки внутри
+                                const buttons = column.querySelectorAll('button');
+                                buttons.forEach(btn => {
+                                    if (btn.textContent.includes('Войти в систему')) {
+                                        btn.style.display = 'none';
+                                        btn.style.visibility = 'hidden';
+                                        btn.style.opacity = '0';
+                                        btn.setAttribute('disabled', 'true');
+                                    }
+                                });
+                            }
+                        }
+                        // Также скрываем саму кнопку, если она найдена отдельно
+                        if (el.tagName === 'BUTTON' && el.textContent.includes('Войти в систему')) {
+                            el.style.display = 'none';
+                            el.style.visibility = 'hidden';
+                            el.style.opacity = '0';
+                            el.style.height = '0';
+                            el.style.width = '0';
+                            el.style.padding = '0';
+                            el.style.margin = '0';
+                            el.style.pointerEvents = 'none';
+                            el.setAttribute('disabled', 'true');
+                        }
+                    }
+                });
+            }
+        }
+        
+        // Вызываем функции оборачивания полей в формы
+        wrapPasswordFieldsInForms();
+        setTimeout(wrapPasswordFieldsInForms, 100);
+        setTimeout(wrapPasswordFieldsInForms, 500);
+        
+        // Вызываем сразу и повторно с задержками
+        hideLoginPage();
+        setTimeout(hideLoginPage, 100);
+        setTimeout(hideLoginPage, 500);
+        setTimeout(hideLoginPage, 1000);
+        
+        // Вызываем при загрузке страницы
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() {
+                wrapPasswordFieldsInForms();
+                hideLoginPage();
+            });
+        }
+        
+        // Также проверяем после обновления DOM (для Gradio)
+        const observer = new MutationObserver(function() {
+            setTimeout(function() {
+                wrapPasswordFieldsInForms();
+                hideLoginPage();
+            }, 50);
+        });
+        observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+        
+        // Также слушаем события Gradio
+        window.addEventListener('load', function() {
+            wrapPasswordFieldsInForms();
+            hideLoginPage();
+        });
+        document.addEventListener('DOMContentLoaded', function() {
+            wrapPasswordFieldsInForms();
+            hideLoginPage();
+        });
+        
+        // Постоянная проверка каждые 100мс (на случай, если Gradio перерисовывает компоненты)
+        setInterval(function() {
+            const headerPanel = document.querySelector('.header-panel');
+            const hasHeader = headerPanel && headerPanel.offsetParent !== null && 
+                            headerPanel.textContent.includes('@');
+            
+            if (hasHeader) {
+                // Находим и скрываем все кнопки "Войти в систему"
+                const loginButtons = document.querySelectorAll('button');
+                loginButtons.forEach(btn => {
+                    if (btn.textContent && btn.textContent.includes('Войти в систему')) {
+                        btn.style.cssText = 'display: none !important; visibility: hidden !important; opacity: 0 !important; height: 0 !important; width: 0 !important; padding: 0 !important; margin: 0 !important; pointer-events: none !important;';
+                        btn.setAttribute('disabled', 'true');
+                        btn.setAttribute('aria-hidden', 'true');
+                    }
+                });
+                
+                // Скрываем страницу входа
+                const loginColumns = document.querySelectorAll('.gr-column');
+                loginColumns.forEach(col => {
+                    const hasLoginForm = col.querySelector('input[type="password"]') || 
+                                      col.textContent.includes('Email') ||
+                                      col.textContent.includes('Войти в систему');
+                    if (hasLoginForm) {
+                        col.style.cssText = 'display: none !important; visibility: hidden !important; opacity: 0 !important; height: 0 !important; overflow: hidden !important; pointer-events: none !important;';
+                        col.setAttribute('aria-hidden', 'true');
+                    }
+                });
+            }
+        }, 100);
+    })();
+    </script>
+    """
+    
     with gr.Blocks(title="GMA - Оценка общих движений") as interface:
+        # Используем DOM Controller для агрессивного управления элементами
+        dom_controller_js = get_dom_controller_js()
+        gr.HTML(value=dom_controller_js, visible=False)
+        
+        # Старый JavaScript для совместимости
+        gr.HTML(value=js_hide_login_if_authenticated, visible=False)
+        
         # Верхняя панель - только на главной странице (БЕЗ кнопки входа!)
         # Header показывается только когда main_page видна и содержит только email + кнопку выхода
         header_info = gr.Markdown(
@@ -1377,8 +1598,13 @@ def create_medical_interface():
         is_authenticated = gr.State(value=False)
         current_user_data = gr.State(value=None)
         
-        # СТРАНИЦА 1: ВХОД В СИСТЕМУ (всегда видна)
-        with gr.Column(visible=True) as login_page:
+        # Проверяем начальное состояние авторизации ПЕРЕД созданием страниц
+        # Используем UIStateManager для определения видимости
+        show_login, show_register, show_main = _ui_state_manager.get_page_visibility()
+        logger.info(f"Начальное состояние UI: show_login={show_login}, show_register={show_register}, show_main={show_main}")
+        
+        # СТРАНИЦА 1: ВХОД В СИСТЕМУ (видимость определяется через UIStateManager)
+        with gr.Column(visible=show_login) as login_page:
             gr.Markdown(
                 """
                 <div style="max-width: 420px; margin: 60px auto; padding: 0 24px;">
@@ -1396,6 +1622,7 @@ def create_medical_interface():
             )
             
             # Форма входа
+            gr.HTML(value='<form id="login-form" onsubmit="return false;">', visible=False)
             with gr.Group():
                 login_email = gr.Textbox(
                     label="Email",
@@ -1424,6 +1651,7 @@ def create_medical_interface():
                     value="",
                     elem_classes=["status-message"],
                 )
+            gr.HTML(value='</form>', visible=False)
             
             # Дополнительные ссылки
             with gr.Row():
@@ -1465,6 +1693,7 @@ def create_medical_interface():
                 )
                 
                 # Форма регистрации
+                gr.HTML(value='<form id="register-form" onsubmit="return false;">', visible=False)
                 with gr.Group():
                     reg_email = gr.Textbox(
                         label="Email",
@@ -1509,6 +1738,7 @@ def create_medical_interface():
                         value="",
                         elem_classes=["status-message"],
                     )
+                gr.HTML(value='</form>', visible=False)
                 
                 # Ссылка возврата
                 with gr.Row():
@@ -1531,8 +1761,8 @@ def create_medical_interface():
                 
                 gr.Markdown("</div></div>")  # Закрываем контейнеры
         
-        # СТРАНИЦА 2: ГЛАВНАЯ СТРАНИЦА С ФУНКЦИЯМИ (только для авторизованных)
-        with gr.Column(visible=False) as main_page:
+        # СТРАНИЦА 2: ГЛАВНАЯ СТРАНИЦА С ФУНКЦИЯМИ (видимость определяется через UIStateManager)
+        with gr.Column(visible=show_main) as main_page:
             gr.Markdown(
                 """
                 <div class="container">
@@ -1788,6 +2018,35 @@ def create_medical_interface():
                 """
             return ""
         
+        # Вспомогательная функция для определения видимости страниц
+        def get_page_visibility(is_auth: bool) -> Tuple[gr.update, gr.update, gr.update]:
+            """
+            Определить видимость страниц на основе статуса авторизации.
+            
+            Args:
+                is_auth: Авторизован ли пользователь
+            
+            Returns:
+                Tuple (login_page, register_page, main_page)
+            """
+            logger.info(f"get_page_visibility вызвана с is_auth={is_auth}")
+            if is_auth:
+                result = (
+                    gr.update(visible=False),  # Скрыть страницу входа
+                    gr.update(visible=False),  # Скрыть страницу регистрации
+                    gr.update(visible=True),   # Показать главную страницу
+                )
+                logger.info("Возвращаем: login=False, register=False, main=True")
+                return result
+            else:
+                result = (
+                    gr.update(visible=True),   # Показать страницу входа
+                    gr.update(visible=False),  # Скрыть страницу регистрации
+                    gr.update(visible=False),  # Скрыть главную страницу
+                )
+                logger.info("Возвращаем: login=True, register=False, main=False")
+                return result
+        
         # Функции аутентификации с использованием AuthHandler и StateManager
         def handle_login(email: str, password: str, current_token, current_auth, current_user) -> Tuple[str, str, bool, Optional[str], bool, Optional[Dict], gr.update, gr.update, gr.update, str, gr.update, str]:
             """Обработка входа пользователя с использованием AuthHandler."""
@@ -1822,7 +2081,7 @@ def create_medical_interface():
                 )
                 
                 # Переходим на шаг загрузки видео
-                _step_manager.set_step(AnalysisStep.UPLOAD)
+                _step_manager.go_to_step(AnalysisStep.UPLOAD)
                 
                 user_info = f"Пользователь: {user_data.get('email', user_data.get('username', ''))}"
                 if user_data.get('full_name'):
@@ -1847,6 +2106,7 @@ def create_medical_interface():
                     header_html,  # Обновить header info
                 )
             else:
+                # Явно указываем видимость страниц
                 return (
                     f"<div class='status-error'>{message}</div>",
                     "Текущий пользователь: Не авторизован",
@@ -1854,9 +2114,9 @@ def create_medical_interface():
                     current_token,
                     False,
                     None,
-                    gr.update(visible=True),   # Показать страницу входа
-                    gr.update(visible=False),  # Скрыть страницу регистрации
-                    gr.update(visible=False),   # Скрыть главную страницу
+                    gr.update(visible=True, value=None),   # login_page - показать
+                    gr.update(visible=False, value=None),  # register_page - скрыть
+                    gr.update(visible=False, value=None),  # main_page - скрыть
                     "<div class='status-info'>Ожидание авторизации...</div>",
                     gr.update(visible=False, value=""),  # Скрыть header
                     "",  # Header info
@@ -1905,7 +2165,7 @@ def create_medical_interface():
                 )
                 
                 # Переходим на шаг загрузки видео
-                _step_manager.set_step(AnalysisStep.UPLOAD)
+                _step_manager.go_to_step(AnalysisStep.UPLOAD)
                 
                 user_info = f"Пользователь: {user_data.get('email', user_data.get('username', ''))}"
                 if user_data.get('full_name'):
@@ -1915,6 +2175,7 @@ def create_medical_interface():
                 model_status_text = load_models_and_update_status()
                 
                 header_html = update_header(user_info, True)
+                # Явно указываем видимость страниц
                 return (
                     f"<div class='status-success'>{message}</div>",
                     user_info,
@@ -1922,9 +2183,9 @@ def create_medical_interface():
                     session_token,
                     True,
                     user_data,
-                    gr.update(visible=False),  # Скрыть страницу входа
-                    gr.update(visible=False),  # Скрыть страницу регистрации
-                    gr.update(visible=True),    # Показать главную страницу
+                    login_vis,  # Скрыть страницу входа
+                    reg_vis,    # Скрыть страницу регистрации
+                    main_vis,    # Показать главную страницу
                     model_status_text,
                     gr.update(visible=True, value=header_html),    # Показать header
                     header_html,  # Обновить header info
@@ -1941,15 +2202,20 @@ def create_medical_interface():
             """Обработка выхода пользователя."""
             if current_token:
                 _auth_manager.logout(current_token)
+            # Сбрасываем состояние
+            _state_manager.update_user(is_authenticated=False, session_token=None)
+            _step_manager.go_to_step(AnalysisStep.LOGIN)
+            
+            # Явно указываем видимость страниц
             return (
                 "Текущий пользователь: Не авторизован",
                 False,
                 None,
                 False,
                 None,
-                gr.update(visible=True),   # Показать страницу входа
-                gr.update(visible=False),  # Скрыть страницу регистрации
-                gr.update(visible=False),    # Скрыть главную страницу
+                gr.update(visible=True, value=None),   # login_page - показать
+                gr.update(visible=False, value=None),  # register_page - скрыть
+                gr.update(visible=False, value=None),  # main_page - скрыть
                 "<div class='status-info'>Ожидание авторизации...</div>",
                 gr.update(visible=False, value=""),  # Скрыть header
                 "",  # Header info
@@ -1957,7 +2223,49 @@ def create_medical_interface():
         
         def check_auth_status(current_token) -> Tuple[str, bool, Optional[str], bool, Optional[Dict], gr.update, gr.update, gr.update, str, gr.update, str]:
             """Проверка статуса авторизации при загрузке страницы с использованием AuthHandler."""
+            logger.info(f"check_auth_status вызвана с токеном: {current_token is not None}")
+            
+            # Сначала проверяем состояние через StateManager
+            state = _state_manager.get_state()
+            logger.info(f"Состояние из StateManager: is_authenticated={state.user.is_authenticated}, session_token={state.user.session_token is not None}")
+            
+            # Если пользователь уже авторизован в StateManager, используем его токен
+            if state.user.is_authenticated and state.user.session_token:
+                current_token = state.user.session_token
+                logger.info("Используем токен из StateManager")
+                # Если пользователь авторизован в StateManager, сразу возвращаем главную страницу
+                user_data = {
+                    'email': state.user.email,
+                    'username': state.user.username,
+                    'full_name': state.user.full_name,
+                    'role': state.user.role,
+                }
+                if user_data.get('email'):
+                    logger.info("Пользователь авторизован через StateManager, показываем главную страницу")
+                    user_info = f"Пользователь: {user_data.get('email', user_data.get('username', ''))}"
+                    if user_data.get('full_name'):
+                        user_info += f" ({user_data['full_name']})"
+                    
+                    model_status_text = load_models_and_update_status()
+                    header_html = update_header(user_info, True)
+                    logger.info("Возвращаем видимость страниц: login=False, register=False, main=True")
+                    # Явно указываем все параметры для gr.update() для надежности
+                    return (
+                        user_info,
+                        True,
+                        current_token,
+                        True,
+                        user_data,
+                        gr.update(visible=False, value=None),  # login_page - скрыть
+                        gr.update(visible=False, value=None),  # register_page - скрыть
+                        gr.update(visible=True, value=None),   # main_page - показать
+                        model_status_text,
+                        gr.update(visible=True, value=header_html),
+                        header_html,
+                    )
+            
             user_data = _auth_handler.get_user_from_session(current_token)
+            logger.info(f"Данные пользователя получены: {user_data is not None}")
             
             if user_data:
                 # Обновляем состояние через StateManager
@@ -1978,15 +2286,17 @@ def create_medical_interface():
                 model_status_text = load_models_and_update_status()
                 
                 header_html = update_header(user_info, True)
+                logger.info(f"Возвращаем видимость страниц: login=False, register=False, main=True")
+                # Явно указываем все параметры для gr.update() для надежности
                 return (
                     user_info,
                     True,
                     current_token,
                     True,
                     user_data,
-                    gr.update(visible=False),  # Скрыть страницу входа
-                    gr.update(visible=False),  # Скрыть страницу регистрации
-                    gr.update(visible=True),    # Показать главную страницу
+                    gr.update(visible=False, value=None),  # login_page - скрыть
+                    gr.update(visible=False, value=None),  # register_page - скрыть
+                    gr.update(visible=True, value=None),   # main_page - показать
                     model_status_text,
                     gr.update(visible=True, value=header_html),    # Показать header
                     header_html,  # Header info
@@ -1994,17 +2304,19 @@ def create_medical_interface():
             else:
                 # Сбрасываем состояние
                 _state_manager.update_user(is_authenticated=False, session_token=None)
-                _step_manager.set_step(AnalysisStep.LOGIN)
+                _step_manager.go_to_step(AnalysisStep.LOGIN)
                 
+                logger.info(f"Пользователь не авторизован. Видимость страниц: login=True, register=False, main=False")
+                # Явно указываем все параметры для gr.update() для надежности
                 return (
                     "Текущий пользователь: Не авторизован",
                     False,
                     None,
                     False,
                     None,
-                    gr.update(visible=True),   # Показать страницу входа
-                    gr.update(visible=False),  # Скрыть страницу регистрации
-                    gr.update(visible=False),    # Скрыть главную страницу
+                    gr.update(visible=True, value=None),   # login_page - показать
+                    gr.update(visible=False, value=None),  # register_page - скрыть
+                    gr.update(visible=False, value=None),  # main_page - скрыть
                     "<div class='status-info'>Ожидание авторизации...</div>",
                     gr.update(visible=False, value=""),  # Скрыть header
                     "",  # Header info
@@ -2260,6 +2572,8 @@ def create_medical_interface():
         )
         
         # Проверка статуса при загрузке интерфейса
+        # Используем show_progress=False и queue=False для немедленного выполнения
+        # Также добавляем api_name для более надежной работы
         interface.load(
             fn=check_auth_status,
             inputs=[session_token_storage],
@@ -2276,7 +2590,57 @@ def create_medical_interface():
                 header_info,
                 header_info,  # Для обновления текста в header
             ],
+            show_progress=False,
+            queue=False,  # Выполнять немедленно, без очереди
+            api_name="check_auth",  # Имя API для отладки
         )
+        
+        # Дополнительная проверка через 1 секунду после загрузки (на случай, если Gradio перерисовывает компоненты)
+        def delayed_auth_check():
+            """Дополнительная проверка авторизации с задержкой."""
+            import time
+            time.sleep(1.0)  # Ждем 1 секунду
+            state = _state_manager.get_state()
+            if state.user.is_authenticated:
+                logger.info("Дополнительная проверка через 1 сек: пользователь авторизован")
+                # Обновляем через JavaScript (более надежно)
+                return True
+            return False
+        
+        # Запускаем дополнительную проверку в фоне
+        import threading
+        def run_delayed_check():
+            try:
+                if delayed_auth_check():
+                    logger.info("Дополнительная проверка завершена - пользователь авторизован")
+            except Exception as e:
+                logger.error(f"Ошибка в дополнительной проверке: {e}")
+        
+        threading.Thread(target=run_delayed_check, daemon=True).start()
+        
+        # Дополнительная проверка через 500мс после загрузки (на случай, если Gradio перерисовывает компоненты)
+        def delayed_auth_check():
+            """Дополнительная проверка авторизации с задержкой."""
+            import time
+            time.sleep(0.5)
+            state = _state_manager.get_state()
+            if state.user.is_authenticated:
+                logger.info("Дополнительная проверка: пользователь авторизован, обновляем страницы")
+                return check_auth_status(state.user.session_token)
+            return None
+        
+        # Запускаем дополнительную проверку в фоне
+        import threading
+        def run_delayed_check():
+            try:
+                result = delayed_auth_check()
+                if result:
+                    # Обновляем компоненты через JavaScript (более надежно)
+                    logger.info("Дополнительная проверка завершена")
+            except Exception as e:
+                logger.error(f"Ошибка в дополнительной проверке: {e}")
+        
+        threading.Thread(target=run_delayed_check, daemon=True).start()
         
         # Функции навигации между шагами
         def go_to_step(step_num):

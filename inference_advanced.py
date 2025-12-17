@@ -6,7 +6,12 @@ import argparse
 import json
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
+
+# Устанавливаем backend для matplotlib перед импортом pyplot
+# Это необходимо для работы в Flask/серверном окружении без GUI
+import matplotlib
+matplotlib.use('Agg')  # Используем non-interactive backend
 
 import cv2
 import matplotlib.pyplot as plt
@@ -25,6 +30,38 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+def convert_numpy_types(obj: Any) -> Any:
+    """
+    Рекурсивно конвертирует numpy типы в стандартные Python типы для JSON сериализации.
+    
+    Args:
+        obj: Объект для конвертации
+    
+    Returns:
+        Объект с конвертированными типами
+    """
+    if isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {key: convert_numpy_types(value) for key, value in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [convert_numpy_types(item) for item in obj]
+    elif isinstance(obj, (str, int, float, bool, type(None))):
+        return obj
+    else:
+        # Для других типов пытаемся преобразовать в строку
+        try:
+            return str(obj)
+        except:
+            return obj
 
 
 def load_model_and_detector(
@@ -360,14 +397,17 @@ def generate_report(
         "detailed_analysis": detailed_analysis,
     }
     
+    # Конвертируем numpy типы в стандартные Python типы для JSON
+    report_serializable = convert_numpy_types(report)
+    
     # Сохраняем отчет
     report_path = output_dir / "medical_report.json"
     with open(report_path, "w", encoding="utf-8") as f:
-        json.dump(report, f, indent=2, ensure_ascii=False)
+        json.dump(report_serializable, f, indent=2, ensure_ascii=False)
     
     logger.info(f"Отчет сохранен: {report_path}")
     
-    return report
+    return report_serializable
 
 
 def main():

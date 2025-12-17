@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+
+{% block title %}Редактирование пользователя - Админ-панель{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="admin-container">
+    <div class="admin-header">
+        <div>
+            <h1>Редактирование пользователя</h1>
+        </div>
+        <div class="header-actions">
+            <a href="{{ url_for('main') }}" class="btn-primary">На главную</a>
+            <a href="{{ url_for('admin_users') }}" class="btn-secondary">← Назад к списку</a>
+        </div>
+    </div>
+    
+    <div class="admin-form-container">
+        <form method="POST" class="admin-form">
+            <div class="form-group">
+                <label for="username">Имя пользователя</label>
+                <input type="text" id="username" name="username" value="{{ user.username }}" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" value="{{ user.email or '' }}">
+            </div>
+            
+            <div class="form-group">
+                <label for="full_name">Полное имя</label>
+                <input type="text" id="full_name" name="full_name" value="{{ user.full_name or '' }}">
+            </div>
+            
+            <div class="form-group">
+                <label for="role">Роль</label>
+                <select id="role" name="role">
+                    <option value="user" {{ 'selected' if user.role == 'user' }}>Пользователь</option>
+                    <option value="admin" {{ 'selected' if user.role == 'admin' }}>Администратор</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" name="is_active" {{ 'checked' if user.is_active }}>
+                    Активен
+                </label>
+            </div>
+            
+            <div class="form-group">
+                <label for="password">Новый пароль (оставьте пустым, чтобы не менять)</label>
+                <input type="password" id="password" name="password" placeholder="Минимум 6 символов">
+            </div>
+            
+            <div class="form-actions">
+                <button type="submit" class="btn-primary">Сохранить изменения</button>
+                <a href="{{ url_for('admin_users') }}" class="btn-secondary">Отмена</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

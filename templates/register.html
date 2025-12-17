@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}Регистрация - General Movements Assessment{% endblock %}
+
+{% block content %}
+<div class="login-container">
+    <div class="login-form-wrapper">
+        <div class="login-header">
+            <h2>Регистрация в системе</h2>
+            <p>Создание учетной записи для доступа к системе анализа</p>
+        </div>
+        
+        <form method="POST" action="{{ url_for('register') }}" class="login-form">
+            <div class="form-group">
+                <label for="email">Email</label>
+                <input 
+                    type="email" 
+                    id="email" 
+                    name="email" 
+                    placeholder="your.email@example.com" 
+                    required
+                    autocomplete="email"
+                >
+            </div>
+            
+            <div class="form-group">
+                <label for="full_name">Полное имя</label>
+                <input 
+                    type="text" 
+                    id="full_name" 
+                    name="full_name" 
+                    placeholder="Иван Иванов" 
+                    autocomplete="name"
+                >
+            </div>
+            
+            <div class="form-group">
+                <label for="password">Пароль</label>
+                <input 
+                    type="password" 
+                    id="password" 
+                    name="password" 
+                    placeholder="Минимум 6 символов" 
+                    required
+                    autocomplete="new-password"
+                    minlength="6"
+                >
+            </div>
+            
+            <div class="form-group">
+                <label for="password_confirm">Подтверждение пароля</label>
+                <input 
+                    type="password" 
+                    id="password_confirm" 
+                    name="password_confirm" 
+                    placeholder="Повторите пароль" 
+                    required
+                    autocomplete="new-password"
+                    minlength="6"
+                >
+            </div>
+            
+            <button type="submit" class="btn-primary btn-large">Зарегистрироваться</button>
+        </form>
+        
+        <div class="login-footer">
+            <p>Уже есть учетная запись?</p>
+            <a href="{{ url_for('login') }}" class="btn-secondary">Войти</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

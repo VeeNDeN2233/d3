@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+
+{% block title %}Анализ движений - General Movements Assessment{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/analysis.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="analysis-container">
+    <!-- Stepper - индикатор шагов -->
+    <div class="stepper">
+        <div class="step active" id="step-1">
+            <div class="step-circle">1</div>
+            <div class="step-label">Загрузка видео</div>
+        </div>
+        <div class="step" id="step-2">
+            <div class="step-circle">2</div>
+            <div class="step-label">Параметры</div>
+        </div>
+        <div class="step" id="step-3">
+            <div class="step-circle">3</div>
+            <div class="step-label">Анализ</div>
+        </div>
+        <div class="step" id="step-4">
+            <div class="step-circle">4</div>
+            <div class="step-label">Результаты</div>
+        </div>
+    </div>
+    
+    <!-- Шаг 1: Загрузка видео -->
+    <div class="step-panel active" id="step1-panel">
+        <h2>Шаг 1: Загрузка видео</h2>
+        <p>Загрузите видео младенца для анализа движений. Видео должно соответствовать требованиям съемки для GMA.</p>
+        
+        <div class="file-upload-area" id="upload-area">
+            <input type="file" id="video-input" accept="video/*" style="display: none;">
+            <div class="upload-placeholder">
+                <p>Перетащите видео сюда или нажмите для выбора</p>
+                <p class="upload-hint">Формат: MP4, AVI, MOV, MKV, WebM</p>
+            </div>
+        </div>
+        
+        <div class="status-info" id="upload-status" style="display: none;">
+            <strong>Требования к видео:</strong>
+            <ul>
+                <li>Формат: MP4, AVI, MOV, MKV, WebM</li>
+                <li>Длительность: 1-3 минуты</li>
+                <li>Положение камеры: сверху, видны руки и ноги</li>
+                <li>Ребенок: лежит на спине, спокоен, легко одет</li>
+            </ul>
+        </div>
+        
+        <button class="btn-primary btn-large" id="next-to-step2" disabled>Далее</button>
+    </div>
+    
+    <!-- Шаг 2: Параметры -->
+    <div class="step-panel" id="step2-panel" style="display: none;">
+        <h2>Шаг 2: Клинические параметры</h2>
+        <p>Укажите параметры для корректировки модели анализа. Эти данные используются для адаптации алгоритма под возраст ребенка.</p>
+        
+        <div class="form-row">
+            <div class="form-group">
+                <label for="age_weeks">Возраст ребенка (недели)</label>
+                <input type="number" id="age_weeks" name="age_weeks" value="12" min="0" max="20" step="1">
+            </div>
+            
+            <div class="form-group">
+                <label for="gestational_age">Гестационный возраст (недели)</label>
+                <input type="number" id="gestational_age" name="gestational_age" value="40" min="24" max="42" step="1">
+            </div>
+        </div>
+        
+        <div class="button-group">
+            <button class="btn-secondary" id="back-to-step1">Назад</button>
+            <button class="btn-primary" id="next-to-step3">Далее</button>
+        </div>
+    </div>
+    
+    <!-- Шаг 3: Анализ -->
+    <div class="step-panel" id="step3-panel" style="display: none;">
+        <h2>Шаг 3: Запуск анализа</h2>
+        <p>После загрузки видео и указания параметров запустите анализ движений. Процесс может занять несколько минут.</p>
+        
+        <div id="analysis-progress" style="display: none;">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill"></div>
+            </div>
+            <p id="progress-text">Инициализация анализа...</p>
+        </div>
+        
+        <div class="action-section">
+            <div class="button-group">
+                <button class="btn-primary btn-large" id="start-analysis" disabled>
+                    <span class="btn-icon">▶</span>
+                    <span>Запустить анализ движений</span>
+                </button>
+                <button class="btn-stop" id="cancel-analysis" style="display: none;">
+                    <span class="btn-icon">⏹</span>
+                    <span>Отменить анализ</span>
+                </button>
+            </div>
+        </div>
+        
+        <div id="analysis-status" class="status-info" style="display: none;">
+            Ожидание запуска анализа
+        </div>
+        
+        <div class="button-group" style="margin-top: 24px;">
+            <button class="btn-secondary" id="back-to-step2">← Назад</button>
+        </div>
+    </div>
+    
+    <!-- Шаг 4: Результаты -->
+    <div class="step-panel" id="step4-panel" style="display: none;">
+        <h2>Шаг 4: Результаты анализа</h2>
+        <p>Результаты анализа включают оценку риска, видео с наложенным скелетом и графики реконструкционной ошибки.</p>
+        
+        <div class="results-container">
+            <div class="report-section">
+                <h3>Медицинский отчет</h3>
+                <div class="report-content" id="report-content">
+                    Результаты анализа появятся здесь после завершения обработки видео.
+                </div>
+            </div>
+            
+            <div class="visual-results">
+                <div class="result-item">
+                    <h4>Видео с наложенным скелетом</h4>
+                    <video id="skeleton-video" controls style="width: 100%; max-width: 600px;"></video>
+                </div>
+                
+                <div class="result-item">
+                    <h4>График ошибки реконструкции</h4>
+                    <img id="anomaly-plot" src="" alt="График ошибки реконструкции" style="width: 100%; max-width: 600px;">
+                </div>
+            </div>
+        </div>
+        
+        <div class="button-group" style="margin-top: 24px;">
+            <button class="btn-primary btn-large" id="download-results" style="display: none;">
+                <span class="btn-icon">⬇</span>
+                <span>Скачать результаты</span>
+            </button>
+            <button class="btn-secondary btn-large" id="new-analysis">Начать новый анализ</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/analysis.js') }}"></script>
+{% endblock %}

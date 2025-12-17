@@ -1,12 +1,14 @@
 """
 База данных для хранения пользователей.
+С защитой от SQL инъекций через параметризованные запросы.
 """
 
 import sqlite3
-import hashlib
+import bcrypt
+import hashlib  # Для обратной совместимости со старыми паролями
 import secrets
 from pathlib import Path
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, List
 from datetime import datetime, timedelta
 import logging
 
@@ -78,18 +80,37 @@ class UserDatabase:
         logger.info(f"База данных инициализирована: {self.db_path}")
     
     def _hash_password(self, password: str) -> str:
-        """Хеширование пароля с использованием SHA-256 и соли."""
-        salt = secrets.token_hex(16)
-        password_hash = hashlib.sha256((password + salt).encode()).hexdigest()
-        return f"{salt}:{password_hash}"
+        """
+        Безопасное хэширование пароля с использованием bcrypt.
+        Bcrypt автоматически добавляет соль и использует адаптивный алгоритм.
+        """
+        # Генерируем соль и хэшируем пароль
+        salt = bcrypt.gensalt(rounds=12)  # 12 раундов для баланса безопасности и производительности
+        password_hash = bcrypt.hashpw(password.encode('utf-8'), salt)
+        return password_hash.decode('utf-8')
     
     def _verify_password(self, password: str, password_hash: str) -> bool:
-        """Проверка пароля."""
+        """
+        Проверка пароля с поддержкой старых (SHA-256) и новых (bcrypt) форматов.
+        Bcrypt автоматически извлекает соль из хэша.
+        """
         try:
-            salt, stored_hash = password_hash.split(':')
-            computed_hash = hashlib.sha256((password + salt).encode()).hexdigest()
-            return computed_hash == stored_hash
-        except ValueError:
+            # Пытаемся проверить как bcrypt (новый формат)
+            if password_hash.startswith('$2b$') or password_hash.startswith('$2a$'):
+                return bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8'))
+            
+            # Старый формат SHA-256 (для обратной совместимости)
+            # Формат: "salt:hash"
+            if ':' in password_hash:
+                salt, stored_hash = password_hash.split(':', 1)
+                computed_hash = hashlib.sha256((password + salt).encode()).hexdigest()
+                return computed_hash == stored_hash
+            
+            # Если формат не распознан, пробуем bcrypt
+            return bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8'))
+            
+        except (ValueError, TypeError) as e:
+            logger.error(f"Ошибка проверки пароля: {e}")
             return False
     
     def create_user(
@@ -380,12 +401,181 @@ class UserDatabase:
                 'role': user_data[4],
                 'created_at': user_data[5],
                 'last_login': user_data[6],
-                'is_active': user_data[7]
+                'is_active': bool(user_data[7])
             }
         
         except sqlite3.Error as e:
             logger.error(f"Ошибка получения пользователя: {e}")
             return None
+        
+        finally:
+            conn.close()
+    
+    def get_all_users(self) -> List[Dict]:
+        """Получить список всех пользователей (для админки)."""
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("""
+                SELECT id, username, email, full_name, role, created_at, last_login, is_active
+                FROM users
+                ORDER BY created_at DESC
+            """)
+            
+            users = []
+            for row in cursor.fetchall():
+                users.append({
+                    'id': row[0],
+                    'username': row[1],
+                    'email': row[2],
+                    'full_name': row[3],
+                    'role': row[4],
+                    'created_at': row[5],
+                    'last_login': row[6],
+                    'is_active': bool(row[7])
+                })
+            
+            return users
+        
+        except sqlite3.Error as e:
+            logger.error(f"Ошибка получения списка пользователей: {e}")
+            return []
+        
+        finally:
+            conn.close()
+    
+    def update_user(
+        self,
+        user_id: int,
+        username: Optional[str] = None,
+        email: Optional[str] = None,
+        full_name: Optional[str] = None,
+        role: Optional[str] = None,
+        is_active: Optional[bool] = None,
+        password: Optional[str] = None
+    ) -> Tuple[bool, str]:
+        """
+        Обновление данных пользователя (для админки).
+        Использует параметризованные запросы для защиты от SQL инъекций.
+        
+        Args:
+            user_id: ID пользователя
+            username: Новое имя пользователя
+            email: Новый email
+            full_name: Новое полное имя
+            role: Новая роль
+            is_active: Активен ли пользователь
+            password: Новый пароль (опционально)
+        
+        Returns:
+            Tuple (успех, сообщение)
+        """
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+        
+        try:
+            # Проверяем существование пользователя (параметризованный запрос)
+            cursor.execute("SELECT id FROM users WHERE id = ?", (user_id,))
+            if not cursor.fetchone():
+                return False, "Пользователь не найден"
+            
+            updates = []
+            params = []
+            
+            if username is not None:
+                # Проверяем уникальность username (параметризованный запрос)
+                cursor.execute("SELECT id FROM users WHERE username = ? AND id != ?", (username, user_id))
+                if cursor.fetchone():
+                    return False, "Пользователь с таким именем уже существует"
+                updates.append("username = ?")
+                params.append(username)
+            
+            if email is not None:
+                # Проверяем уникальность email (параметризованный запрос)
+                cursor.execute("SELECT id FROM users WHERE email = ? AND id != ?", (email, user_id))
+                if cursor.fetchone():
+                    return False, "Пользователь с таким email уже существует"
+                updates.append("email = ?")
+                params.append(email)
+            
+            if full_name is not None:
+                updates.append("full_name = ?")
+                params.append(full_name)
+            
+            if role is not None:
+                if role not in ['user', 'admin']:
+                    return False, "Недопустимая роль"
+                updates.append("role = ?")
+                params.append(role)
+            
+            if is_active is not None:
+                updates.append("is_active = ?")
+                params.append(1 if is_active else 0)
+            
+            if password is not None:
+                if len(password) < 6:
+                    return False, "Пароль должен содержать минимум 6 символов"
+                password_hash = self._hash_password(password)
+                updates.append("password_hash = ?")
+                params.append(password_hash)
+            
+            if not updates:
+                return False, "Нет данных для обновления"
+            
+            params.append(user_id)
+            # Параметризованный запрос - защита от SQL инъекций
+            query = f"UPDATE users SET {', '.join(updates)} WHERE id = ?"
+            
+            cursor.execute(query, params)
+            conn.commit()
+            
+            logger.info(f"Пользователь {user_id} обновлен")
+            return True, "Пользователь успешно обновлен"
+        
+        except sqlite3.Error as e:
+            logger.error(f"Ошибка обновления пользователя: {e}")
+            return False, f"Ошибка базы данных: {str(e)}"
+        
+        finally:
+            conn.close()
+    
+    def delete_user(self, user_id: int) -> Tuple[bool, str]:
+        """
+        Удаление пользователя (для админки).
+        Использует параметризованные запросы для защиты от SQL инъекций.
+        
+        Args:
+            user_id: ID пользователя
+        
+        Returns:
+            Tuple (успех, сообщение)
+        """
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+        
+        try:
+            # Проверяем существование пользователя (параметризованный запрос)
+            cursor.execute("SELECT username FROM users WHERE id = ?", (user_id,))
+            user_data = cursor.fetchone()
+            if not user_data:
+                return False, "Пользователь не найден"
+            
+            username = user_data[0]
+            
+            # Удаляем все сессии пользователя (параметризованный запрос)
+            cursor.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+            
+            # Удаляем пользователя (параметризованный запрос)
+            cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
+            conn.commit()
+            
+            logger.info(f"Пользователь {username} (ID: {user_id}) удален")
+            return True, f"Пользователь {username} успешно удален"
+        
+        except sqlite3.Error as e:
+            logger.error(f"Ошибка удаления пользователя: {e}")
+            return False, f"Ошибка базы данных: {str(e)}"
         
         finally:
             conn.close()

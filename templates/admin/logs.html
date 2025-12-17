@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}Журнал логов - Админ-панель{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="admin-container">
+    <div class="admin-header">
+        <div>
+            <h1>Журнал логов</h1>
+        </div>
+        <div class="header-actions">
+            <a href="{{ url_for('main') }}" class="btn-primary">На главную</a>
+            <a href="{{ url_for('admin_dashboard') }}" class="btn-secondary">← Назад к панели</a>
+        </div>
+    </div>
+    
+    <div class="log-filters">
+        <a href="{{ url_for('admin_logs', type='all') }}" 
+           class="filter-btn {{ 'active' if log_type == 'all' }}">Все логи</a>
+        <a href="{{ url_for('admin_logs', type='app') }}" 
+           class="filter-btn {{ 'active' if log_type == 'app' }}">Приложение</a>
+        <a href="{{ url_for('admin_logs', type='errors') }}" 
+           class="filter-btn {{ 'active' if log_type == 'errors' }}">Ошибки</a>
+        <a href="{{ url_for('admin_logs', type='admin') }}" 
+           class="filter-btn {{ 'active' if log_type == 'admin' }}">Действия администраторов</a>
+    </div>
+    
+    <div class="log-container">
+        {% if logs %}
+        <div class="log-entries">
+            {% for log in logs %}
+            <div class="log-entry log-{{ log.level.lower() }}">
+                <div class="log-header">
+                    <span class="log-timestamp">{{ log.timestamp }}</span>
+                    <span class="log-level log-level-{{ log.level.lower() }}">{{ log.level }}</span>
+                    <span class="log-logger">{{ log.logger }}</span>
+                </div>
+                <div class="log-message">{{ log.message }}</div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="no-logs">
+            <p>Логи не найдены</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

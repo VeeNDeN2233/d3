@@ -16,6 +16,10 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+# Устанавливаем backend для matplotlib перед импортом pyplot
+import matplotlib
+matplotlib.use('Agg')  # Используем non-interactive backend
+
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np

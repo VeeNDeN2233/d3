@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+
+{% block title %}Управление пользователями - Админ-панель{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="admin-container">
+    <div class="admin-header">
+        <div>
+            <h1>Управление пользователями</h1>
+        </div>
+        <div class="header-actions">
+            <a href="{{ url_for('main') }}" class="btn-primary">На главную</a>
+            <a href="{{ url_for('admin_dashboard') }}" class="btn-secondary">← Назад к панели</a>
+        </div>
+    </div>
+    
+    <div class="admin-table-container">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Имя пользователя</th>
+                    <th>Email</th>
+                    <th>Полное имя</th>
+                    <th>Роль</th>
+                    <th>Статус</th>
+                    <th>Создан</th>
+                    <th>Последний вход</th>
+                    <th>Действия</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in users %}
+                <tr>
+                    <td>{{ user.id }}</td>
+                    <td>{{ user.username }}</td>
+                    <td>{{ user.email or '-' }}</td>
+                    <td>{{ user.full_name or '-' }}</td>
+                    <td>
+                        <span class="badge badge-{{ 'admin' if user.role == 'admin' else 'user' }}">
+                            {{ user.role }}
+                        </span>
+                    </td>
+                    <td>
+                        <span class="badge badge-{{ 'success' if user.is_active else 'danger' }}">
+                            {{ 'Активен' if user.is_active else 'Заблокирован' }}
+                        </span>
+                    </td>
+                    <td>{{ user.created_at or '-' }}</td>
+                    <td>{{ user.last_login or 'Никогда' }}</td>
+                    <td>
+                        <a href="{{ url_for('admin_edit_user', user_id=user.id) }}" class="btn-action btn-edit">✏️</a>
+                        <form method="POST" action="{{ url_for('admin_delete_user', user_id=user.id) }}" 
+                              style="display: inline;" 
+                              onsubmit="return confirm('Вы уверены, что хотите удалить пользователя {{ user.username }}?');">
+                            <button type="submit" class="btn-action btn-delete">🗑️</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

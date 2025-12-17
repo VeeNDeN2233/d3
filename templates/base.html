@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}General Movements Assessment{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    {% if 'user_id' in session %}
+    <!-- Header для авторизованных пользователей -->
+    <header class="header-panel">
+        <div class="header-container">
+            <div class="header-left">
+                <h1>General Movements Assessment</h1>
+                <p>Система анализа движений младенцев</p>
+            </div>
+            <div class="header-right">
+                <span class="user-email">{{ session.get('email', '') }}</span>
+                {% if session.get('role') == 'admin' %}
+                <a href="{{ url_for('admin_dashboard') }}" class="btn-admin">Админ-панель</a>
+                {% endif %}
+                <a href="{{ url_for('logout') }}" class="btn-logout">Выйти</a>
+            </div>
+        </div>
+    </header>
+    {% endif %}
+    
+    <!-- Окно загрузки моделей (под шапкой) -->
+    {% if 'user_id' in session %}
+    <div class="model-loading-banner" id="model-loading-banner" style="display: none;">
+        <div class="model-loading-container" id="model-loading-container">
+            <div class="model-loading-header">
+                <h3>Инициализация системы</h3>
+                <p>Загрузка моделей машинного обучения...</p>
+            </div>
+            <div class="model-progress-wrapper">
+                <div class="model-progress-bar">
+                    <div class="model-progress-fill" id="model-progress-fill"></div>
+                </div>
+                <p class="model-progress-text" id="model-progress-text">Подготовка к загрузке...</p>
+            </div>
+            <div class="model-loading-details" id="model-loading-details">
+                <div class="loading-step" id="loading-step-1">
+                    <span class="step-icon">⏳</span>
+                    <span class="step-text">Проверка GPU...</span>
+                </div>
+                <div class="loading-step" id="loading-step-2">
+                    <span class="step-icon">⏳</span>
+                    <span class="step-text">Загрузка конфигурации...</span>
+                </div>
+                <div class="loading-step" id="loading-step-3">
+                    <span class="step-icon">⏳</span>
+                    <span class="step-text">Загрузка модели LSTM...</span>
+                </div>
+                <div class="loading-step" id="loading-step-4">
+                    <span class="step-icon">⏳</span>
+                    <span class="step-text">Загрузка детектора аномалий...</span>
+                </div>
+                <div class="loading-step" id="loading-step-5">
+                    <span class="step-icon">⏳</span>
+                    <span class="step-text">Инициализация процессоров...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    
+    <main class="main-content">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="flash-messages">
+                    {% for category, message in messages %}
+                        <div class="flash-message flash-{{ category }}">{{ message }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+        
+        {% block content %}{% endblock %}
+    </main>
+    
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

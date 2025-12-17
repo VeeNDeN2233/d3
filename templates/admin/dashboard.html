@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block title %}Админ-панель - General Movements Assessment{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="admin-container">
+    <div class="admin-header">
+        <div>
+            <h1>Админ-панель</h1>
+            <p>Управление системой анализа движений младенцев</p>
+        </div>
+        <a href="{{ url_for('main') }}" class="btn-primary">На главную</a>
+    </div>
+    
+    <div class="admin-grid">
+        <a href="{{ url_for('admin_users') }}" class="admin-card">
+            <div class="card-icon">👥</div>
+            <h3>Управление пользователями</h3>
+            <p>Просмотр, редактирование и удаление учетных записей</p>
+        </a>
+        
+        <a href="{{ url_for('admin_logs', type='all') }}" class="admin-card">
+            <div class="card-icon">📋</div>
+            <h3>Журнал логов</h3>
+            <p>Просмотр системных логов и ошибок</p>
+        </a>
+        
+        <a href="{{ url_for('admin_logs', type='errors') }}" class="admin-card">
+            <div class="card-icon">⚠️</div>
+            <h3>Ошибки системы</h3>
+            <p>Просмотр только ошибок и предупреждений</p>
+        </a>
+        
+        <a href="{{ url_for('admin_logs', type='admin') }}" class="admin-card">
+            <div class="card-icon">🔐</div>
+            <h3>Логи админки</h3>
+            <p>Действия администраторов</p>
+        </a>
+    </div>
+</div>
+{% endblock %}

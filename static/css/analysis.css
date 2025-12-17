@@ -1,0 +1,741 @@
+/* Стили для страницы анализа - Унифицированный дизайн */
+/* Использует базовые стили из style.css и расширяет их */
+
+.analysis-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    animation: fadeIn 0.5s ease-in;
+}
+
+/* Анимация fadeIn определена в style.css */
+
+/* Stepper - улучшенный дизайн */
+.stepper {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 0 0 40px 0;
+    padding: 32px 40px;
+    background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+    border-radius: 16px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+    position: relative;
+    overflow: hidden;
+}
+
+.stepper::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 10%;
+    right: 10%;
+    height: 3px;
+    background: linear-gradient(90deg, #e2e8f0 0%, #cbd5e0 50%, #e2e8f0 100%);
+    border-radius: 2px;
+    z-index: 0;
+    transform: translateY(-50%);
+}
+
+.stepper::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(135deg, rgba(74, 144, 226, 0.03) 0%, rgba(72, 187, 120, 0.03) 100%);
+    pointer-events: none;
+}
+
+.step {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex: 1;
+    transition: transform 0.3s ease;
+}
+
+.step:hover {
+    transform: translateY(-2px);
+}
+
+.step-circle {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #ffffff 0%, #f7fafc 100%);
+    border: 3px solid #e2e8f0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 16px;
+    color: #a0aec0;
+    margin-bottom: 12px;
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    position: relative;
+}
+
+.step-circle::before {
+    content: '';
+    position: absolute;
+    inset: -3px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #4a90e2, #48bb78);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    z-index: -1;
+}
+
+.step.active .step-circle {
+    background: linear-gradient(135deg, #4a90e2 0%, #357abd 100%);
+    border-color: #4a90e2;
+    color: #ffffff;
+    transform: scale(1.1);
+    box-shadow: 0 4px 16px rgba(74, 144, 226, 0.4);
+}
+
+.step.active .step-circle::before {
+    opacity: 0.2;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        transform: scale(1);
+        opacity: 0.2;
+    }
+    50% {
+        transform: scale(1.2);
+        opacity: 0;
+    }
+}
+
+.step.completed .step-circle {
+    background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
+    border-color: #48bb78;
+    color: #ffffff;
+    box-shadow: 0 4px 16px rgba(72, 187, 120, 0.3);
+}
+
+.step.completed .step-circle::after {
+    content: '✓';
+    font-size: 20px;
+}
+
+.step-label {
+    font-size: 13px;
+    color: #718096;
+    text-align: center;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+
+.step.active .step-label {
+    color: #2d3748;
+    font-weight: 700;
+    font-size: 14px;
+    transform: scale(1.05);
+}
+
+/* Step panels - улучшенный дизайн */
+.step-panel {
+    background: linear-gradient(135deg, #ffffff 0%, #fafbfc 100%);
+    border: 2px solid #e2e8f0;
+    border-radius: 20px;
+    padding: 40px;
+    margin: 0 0 32px 0;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+.step-panel::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #4a90e2 0%, #48bb78 100%);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 0.5s ease;
+}
+
+.step-panel.active {
+    border-color: #4a90e2;
+    box-shadow: 0 8px 32px rgba(74, 144, 226, 0.15), 0 2px 8px rgba(0, 0, 0, 0.1);
+    transform: translateY(-2px);
+    background: linear-gradient(135deg, #ffffff 0%, #f8faff 100%);
+}
+
+.step-panel.active::before {
+    transform: scaleX(1);
+}
+
+.step-panel h2 {
+    color: #1a202c;
+    font-weight: 700;
+    font-size: 28px;
+    margin: 0 0 16px 0;
+    background: linear-gradient(135deg, #2d3748 0%, #4a5568 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    letter-spacing: -0.5px;
+}
+
+.step-panel p {
+    color: #64748b;
+    font-size: 15px;
+    margin-bottom: 32px;
+    line-height: 1.7;
+    font-weight: 400;
+}
+
+/* File upload - улучшенный дизайн */
+.file-upload-area {
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    border: 3px dashed #cbd5e0;
+    border-radius: 20px;
+    padding: 64px 32px;
+    text-align: center;
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    min-height: 260px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    margin: 32px 0;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+}
+
+.file-upload-area::before {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: radial-gradient(circle, rgba(74, 144, 226, 0.1) 0%, transparent 70%);
+    opacity: 0;
+    transition: opacity 0.4s ease;
+}
+
+.file-upload-area:hover {
+    border-color: #4a90e2;
+    background: linear-gradient(135deg, #edf2f7 0%, #e2e8f0 100%);
+    transform: translateY(-4px);
+    box-shadow: 0 8px 24px rgba(74, 144, 226, 0.15);
+}
+
+.file-upload-area:hover::before {
+    opacity: 1;
+}
+
+.file-upload-area.has-file {
+    border-color: #48bb78;
+    background: linear-gradient(135deg, #f0fff4 0%, #e6ffed 100%);
+    border-style: solid;
+    box-shadow: 0 4px 16px rgba(72, 187, 120, 0.2);
+}
+
+.upload-placeholder p {
+    margin: 8px 0;
+    color: #718096;
+}
+
+.upload-hint {
+    font-size: 12px;
+    color: #a0aec0;
+}
+
+/* Form row */
+.form-row {
+    display: flex;
+    gap: 24px;
+    margin-bottom: 24px;
+}
+
+.form-row .form-group {
+    flex: 1;
+}
+
+/* Button group - унифицированный дизайн (стили наследуются из style.css) */
+.button-group {
+    display: flex;
+    gap: 16px;
+    justify-content: flex-end;
+    margin-top: 32px;
+    flex-wrap: wrap;
+}
+
+/* Кнопки используют стили из style.css, но можно переопределить для специфичных случаев */
+.btn-stop {
+    background: linear-gradient(135deg, #e53e3e 0%, #c53030 100%);
+    color: white;
+    border: none;
+    border-radius: 12px;
+    padding: 12px 28px;
+    font-weight: 600;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 4px 12px rgba(229, 62, 62, 0.3);
+    position: relative;
+    overflow: hidden;
+}
+
+.btn-stop::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.3);
+    transform: translate(-50%, -50%);
+    transition: width 0.6s, height 0.6s;
+}
+
+.btn-stop:hover {
+    background: linear-gradient(135deg, #c53030 0%, #9b2c2c 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(229, 62, 62, 0.4);
+}
+
+.btn-stop:hover::before {
+    width: 300px;
+    height: 300px;
+}
+
+/* Progress bar - улучшенный дизайн */
+#analysis-progress {
+    background: linear-gradient(135deg, #f8faff 0%, #f1f5f9 100%);
+    border-radius: 16px;
+    padding: 32px;
+    margin: 32px 0;
+    border: 2px solid #e2e8f0;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+}
+
+.progress-bar {
+    width: 100%;
+    height: 12px;
+    background: linear-gradient(90deg, #e2e8f0 0%, #cbd5e0 100%);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 20px;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+    position: relative;
+}
+
+.progress-bar::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.3) 50%, transparent 100%);
+    animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+    0% {
+        transform: translateX(-100%);
+    }
+    100% {
+        transform: translateX(100%);
+    }
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #4a90e2 0%, #357abd 50%, #48bb78 100%);
+    background-size: 200% 100%;
+    transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+    width: 0%;
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(74, 144, 226, 0.4);
+    position: relative;
+    overflow: hidden;
+}
+
+.progress-fill::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.4) 50%, transparent 100%);
+    animation: progressShine 1.5s infinite;
+}
+
+@keyframes progressShine {
+    0% {
+        transform: translateX(-100%);
+    }
+    100% {
+        transform: translateX(100%);
+    }
+}
+
+#progress-text {
+    font-size: 16px;
+    font-weight: 600;
+    color: #2d3748;
+    text-align: center;
+    margin: 0;
+    background: linear-gradient(135deg, #4a90e2 0%, #48bb78 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+/* Results */
+.results-container {
+    margin-top: 24px;
+}
+
+.report-section {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 24px;
+    margin-bottom: 24px;
+}
+
+.report-section h3 {
+    color: #2d3748;
+    font-weight: 600;
+    font-size: 18px;
+    margin-bottom: 16px;
+}
+
+.report-content {
+    background: #f7fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 20px;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    max-height: 500px;
+    overflow-y: auto;
+}
+
+.visual-results {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 24px;
+    margin-bottom: 24px;
+}
+
+.result-item {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 20px;
+}
+
+.result-item h4 {
+    color: #2d3748;
+    font-weight: 600;
+    font-size: 16px;
+    margin-bottom: 12px;
+}
+
+.result-item video,
+.result-item img {
+    width: 100%;
+    border-radius: 6px;
+    border: 1px solid #e2e8f0;
+}
+
+/* Status messages - улучшенный дизайн */
+.status-info {
+    background: linear-gradient(135deg, #ebf8ff 0%, #e6f3ff 100%);
+    border-left: 5px solid #4a90e2;
+    padding: 20px 24px;
+    border-radius: 12px;
+    margin: 32px 0;
+    font-size: 15px;
+    color: #2c5282;
+    box-shadow: 0 2px 8px rgba(74, 144, 226, 0.1);
+    font-weight: 500;
+}
+
+.status-success {
+    background: linear-gradient(135deg, #f0fff4 0%, #e6ffed 100%);
+    border-left: 5px solid #48bb78;
+    padding: 20px 24px;
+    border-radius: 12px;
+    margin: 32px 0;
+    font-size: 15px;
+    color: #22543d;
+    box-shadow: 0 2px 8px rgba(72, 187, 120, 0.1);
+    font-weight: 500;
+}
+
+.status-error {
+    background: linear-gradient(135deg, #fff5f5 0%, #ffe5e5 100%);
+    border-left: 5px solid #e53e3e;
+    padding: 20px 24px;
+    border-radius: 12px;
+    margin: 32px 0;
+    font-size: 15px;
+    color: #742a2a;
+    box-shadow: 0 2px 8px rgba(229, 62, 62, 0.1);
+    font-weight: 500;
+}
+
+.system-status {
+    margin-top: 40px;
+    padding: 32px;
+    background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+    border: 2px solid #e2e8f0;
+    border-radius: 20px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+}
+
+/* Баннер загрузки моделей (под шапкой) */
+.model-loading-banner {
+    background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+    border-bottom: 2px solid #e2e8f0;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    padding: 20px 32px;
+    margin-bottom: 0;
+    transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+    animation: slideDown 0.5s ease-out;
+    overflow: hidden;
+}
+
+.model-loading-banner.fade-out {
+    animation: slideUp 0.5s ease-in forwards;
+    opacity: 0;
+    max-height: 0;
+    padding: 0 32px;
+    margin-bottom: 0;
+    border-bottom: none;
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+        max-height: 0;
+        padding: 0 32px;
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+        max-height: 400px;
+        padding: 20px 32px;
+    }
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 1;
+        transform: translateY(0);
+        max-height: 400px;
+        padding: 20px 32px;
+    }
+    to {
+        opacity: 0;
+        transform: translateY(-20px);
+        max-height: 0;
+        padding: 0 32px;
+        margin-bottom: 0;
+    }
+}
+
+/* Модель загрузка */
+.model-loading-container {
+    animation: fadeIn 0.5s ease-in;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.model-loading-header {
+    text-align: center;
+    margin-bottom: 32px;
+}
+
+.model-loading-header h3 {
+    font-size: 24px;
+    font-weight: 700;
+    color: #1a202c;
+    margin: 0 0 8px 0;
+    background: linear-gradient(135deg, #2d3748 0%, #4a5568 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.model-loading-header p {
+    font-size: 15px;
+    color: #64748b;
+    margin: 0;
+}
+
+.model-progress-wrapper {
+    margin: 24px 0;
+}
+
+.model-progress-bar {
+    width: 100%;
+    height: 14px;
+    background: linear-gradient(90deg, #e2e8f0 0%, #cbd5e0 100%);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 16px;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+    position: relative;
+}
+
+.model-progress-bar::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.3) 50%, transparent 100%);
+    animation: shimmer 2s infinite;
+}
+
+.model-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #4a90e2 0%, #357abd 50%, #48bb78 100%);
+    background-size: 200% 100%;
+    transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    width: 0%;
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(74, 144, 226, 0.4);
+    position: relative;
+    overflow: hidden;
+}
+
+.model-progress-fill::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.4) 50%, transparent 100%);
+    animation: progressShine 1.5s infinite;
+}
+
+.model-progress-text {
+    font-size: 16px;
+    font-weight: 600;
+    color: #2d3748;
+    text-align: center;
+    margin: 0;
+    background: linear-gradient(135deg, #4a90e2 0%, #48bb78 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.model-loading-details {
+    margin-top: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.loading-step {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    border-radius: 10px;
+    border: 2px solid #e2e8f0;
+    transition: all 0.3s ease;
+    opacity: 0.6;
+}
+
+.loading-step.active {
+    opacity: 1;
+    border-color: #4a90e2;
+    background: linear-gradient(135deg, #f8faff 0%, #f1f5f9 100%);
+    box-shadow: 0 2px 8px rgba(74, 144, 226, 0.15);
+    transform: translateX(4px);
+}
+
+.loading-step.completed {
+    opacity: 1;
+    border-color: #48bb78;
+    background: linear-gradient(135deg, #f0fff4 0%, #e6ffed 100%);
+}
+
+.loading-step.completed .step-icon {
+    animation: none;
+}
+
+.step-icon {
+    font-size: 20px;
+    min-width: 24px;
+    text-align: center;
+    animation: pulse 1.5s infinite;
+}
+
+.loading-step.completed .step-icon {
+    content: '✓';
+    color: #48bb78;
+    animation: none;
+}
+
+.step-text {
+    font-size: 14px;
+    font-weight: 500;
+    color: #64748b;
+}
+
+.loading-step.active .step-text {
+    color: #2d3748;
+    font-weight: 600;
+}
+
+.loading-step.completed .step-text {
+    color: #22543d;
+    font-weight: 600;
+}
+
+/* Action section для шага 3 */
+.action-section {
+    margin: 40px 0;
+    padding: 32px;
+    background: linear-gradient(135deg, #f8faff 0%, #f1f5f9 100%);
+    border-radius: 16px;
+    border: 2px solid #e2e8f0;
+}
+
+.btn-icon {
+    display: inline-block;
+    margin-right: 8px;
+    font-size: 14px;
+    transition: transform 0.3s ease;
+}
+
+.btn-primary:hover:not(:disabled) .btn-icon,
+.btn-stop:hover .btn-icon {
+    transform: scale(1.2);
+}
+
+/* Формы используют стили из style.css, дополнительные стили только для специфичных случаев */

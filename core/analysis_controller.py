@@ -8,7 +8,7 @@ import logging
 import threading
 from enum import Enum
 
-from core.state_manager import AppState, AnalysisStep, AnalysisState
+from core.state_manager import AppState, AnalysisStep, AnalysisState, StateManager
 from core.file_processor import VideoProcessor
 
 logger = logging.getLogger(__name__)
@@ -102,7 +102,8 @@ class StepManager:
         Returns:
             Tuple (успех, сообщение об ошибке)
         """
-        current_index = self.STEP_ORDER.index(self.state.current_step)
+        state = self.state_manager.get_state()
+        current_index = self.STEP_ORDER.index(state.current_step)
         if current_index >= len(self.STEP_ORDER) - 1:
             return False, "Уже на последнем шаге"
         
@@ -116,7 +117,8 @@ class StepManager:
         Returns:
             Tuple (успех, сообщение об ошибке)
         """
-        current_index = self.STEP_ORDER.index(self.state.current_step)
+        state = self.state_manager.get_state()
+        current_index = self.STEP_ORDER.index(state.current_step)
         if current_index <= 0:
             return False, "Уже на первом шаге"
         
