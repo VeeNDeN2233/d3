@@ -124,3 +124,13 @@ dmypy.json
 
 # Profiling
 *.prof
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+auth/users.db
+
+# Flask session files
+instance/
+.flaskenv

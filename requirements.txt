@@ -1,46 +1,31 @@
-# Web Framework (оптимизированные версии)
-fastapi>=0.115.2,<1.0
-uvicorn[standard]>=0.24.0
-python-multipart>=0.0.18
-starlette>=0.40.0,<1.0
+# Web Framework (Flask)
+flask>=3.0.0
+flask-session>=0.5.0
+werkzeug>=3.0.0
 jinja2>=3.1.2
 
-# Video processing (оптимизированные версии)
-opencv-python-headless>=4.12.0  # headless версия для серверов (меньше зависимостей)
+# Video processing
+opencv-python-headless>=4.12.0
 imageio>=2.31.5
 imageio-ffmpeg>=0.4.9
 
 # Pose estimation
 mediapipe>=0.10.14
 
-# Utilities (оптимизированные версии)
-numpy<2.0,>=1.24.0  # Совместимость с opencv-python
+# Utilities
+numpy<2.0,>=1.24.0
 pillow>=10.0.0
 
 # Deep Learning (GPU) - установите с CUDA из https://pytorch.org/
 torch>=2.0.0
 torchvision>=0.15.0
-# Для оптимизации: torch с CUDA 11.8 или 12.1
 
 # Configuration
 pyyaml>=6.0.0
 
-# Visualization (опционально, только для разработки)
+# Visualization
 matplotlib>=3.7.0
-seaborn>=0.12.0
-
-# Medical Interface
-gradio>=4.0.0
-
-# Web Framework (Flask для многостраничности)
-flask>=3.0.0
-flask-session>=0.5.0
-werkzeug>=3.0.0
 
 # Security
-bcrypt>=4.0.0  # Безопасное хэширование паролей
-
-# Оптимизация (опционально)
-# psutil>=5.9.0  # Для мониторинга ресурсов
-# memory-profiler>=0.61.0  # Для профилирования памяти
+bcrypt>=4.0.0
 

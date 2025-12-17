@@ -22,7 +22,6 @@ from datetime import datetime
 from auth.auth_manager import AuthManager
 from core.state_manager import StateManager, AnalysisStep
 from core.auth_handler import AuthHandler
-from utils.ui_state_manager import UIStateManager
 from utils.logger_config import setup_logging, get_log_entries, admin_logger, LOG_FILE, ERROR_LOG_FILE, ADMIN_LOG_FILE
 
 # Импорт логики анализа
@@ -54,7 +53,6 @@ Path('static').mkdir(exist_ok=True)
 auth_manager = AuthManager()
 _state_manager = StateManager()
 _auth_handler = AuthHandler()
-ui_state_manager = UIStateManager(_state_manager)
 
 
 def require_auth():

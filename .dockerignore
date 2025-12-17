@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Logs
+*.log
+logs/
+
+# Results and uploads (будут монтироваться как volumes)
+results/*
+!results/.gitkeep
+uploads/*
+!uploads/.gitkeep
+
+# Database (будет монтироваться как volume)
+auth/users.db
+auth/*.db
+
+# Checkpoints (будут монтироваться как volume)
+checkpoints/*
+!checkpoints/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation (уже удалена)
+docs/
+
+# Старые файлы (уже удалены)
+*.bat
+*.sh
+*.ps1
