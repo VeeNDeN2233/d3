@@ -1,6 +1,3 @@
-"""
-Модуль обработки видео через MediaPipe Pose.
-"""
 
 from __future__ import annotations
 
@@ -14,7 +11,7 @@ import cv2
 import mediapipe as mp
 import numpy as np
 
-# MINI-RGBD joint names (25 суставов)
+
 MINI_RGBD_JOINT_NAMES = [
     "global",
     "leftThigh",
@@ -43,7 +40,7 @@ MINI_RGBD_JOINT_NAMES = [
     "noseVertex",
 ]
 
-# MediaPipe Pose landmark indices
+
 MP_NOSE = 0
 MP_LEFT_SHOULDER = 11
 MP_RIGHT_SHOULDER = 12
@@ -64,7 +61,6 @@ MP_RIGHT_FOOT_INDEX = 32
 
 
 class VideoProcessor:
-    """Обработка видео: оценка позы (MediaPipe Pose) + визуализация + сохранение меток."""
 
     def __init__(
         self,
@@ -120,7 +116,7 @@ class VideoProcessor:
                 frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
                 results = self._pose.process(frame_rgb)
 
-                # Визуализация
+
                 if results.pose_landmarks:
                     self._mp_drawing.draw_landmarks(
                         frame_bgr,
@@ -128,10 +124,10 @@ class VideoProcessor:
                         self._mp_pose.POSE_CONNECTIONS,
                     )
 
-                # Сохранение keypoints (конвертация в MINI-RGBD формат)
+
                 if save_keypoints:
                     landmarks_33 = self._landmarks_to_list(results.pose_landmarks)
-                    # Конвертируем 33 точки MediaPipe в 25 точек MINI-RGBD
+
                     mini_rgbd_joints = self._convert_to_mini_rgbd(results.pose_landmarks, width, height)
                     all_keypoints.append(
                         {
@@ -163,14 +159,8 @@ class VideoProcessor:
         }
 
     def _landmarks_to_list(self, pose_landmarks) -> List[Dict[str, float]]:
-        """
-        Конвертирует MediaPipe landmarks в список словарей.
-        
-        Если pose_landmarks is None, возвращает список из 33 нулевых точек
-        для сохранения консистентности формата.
-        """
         if pose_landmarks is None:
-            # Возвращаем список из 33 нулевых точек вместо None
+
             return [
                 {"x": 0.0, "y": 0.0, "z": 0.0, "visibility": 0.0}
                 for _ in range(33)
@@ -189,14 +179,12 @@ class VideoProcessor:
         return out
 
     def _get_landmark_point(self, landmarks, idx: int) -> Optional[Tuple[float, float, float]]:
-        """Получить координаты landmark по индексу."""
         if landmarks is None or idx >= len(landmarks.landmark):
             return None
         lm = landmarks.landmark[idx]
         return (lm.x, lm.y, lm.z)
 
     def _average_points(self, p1: Optional[Tuple[float, float, float]], p2: Optional[Tuple[float, float, float]]) -> Optional[Tuple[float, float, float]]:
-        """Вычислить среднюю точку между двумя точками."""
         if p1 is None and p2 is None:
             return None
         if p1 is None:
@@ -208,31 +196,19 @@ class VideoProcessor:
     def _convert_to_mini_rgbd_from_list(
         self, landmarks_33: List[Dict[str, float]], width: int, height: int
     ) -> List[Tuple[float, float, float, float]]:
-        """
-        Конвертирует 33 точки MediaPipe (из списка словарей) в 25 точек MINI-RGBD формата.
-        
-        Args:
-            landmarks_33: Список из 33 словарей с ключами {"x", "y", "z", "visibility"}
-            width: Ширина изображения
-            height: Высота изображения
-        
-        Returns:
-            Список кортежей (x_pixel, y_pixel, depth_mm, joint_id) для 25 суставов MINI-RGBD
-        """
         if not landmarks_33 or len(landmarks_33) != 33:
-            # Возвращаем нули для всех 25 суставов
+
             return [(0.0, 0.0, 0.0, i) for i in range(25)]
         
-        # Используем существующий метод через создание временного объекта landmarks
-        # Но проще использовать прямой маппинг
+
+
         return self._convert_landmarks_list_to_mini_rgbd(landmarks_33, width, height)
     
     def _convert_landmarks_list_to_mini_rgbd(
         self, landmarks_33: List[Dict[str, float]], width: int, height: int
     ) -> List[Tuple[float, float, float, float]]:
-        """Конвертирует список landmarks в формат MINI-RGBD."""
-        # Используем существующую логику из _convert_to_mini_rgbd
-        # Создаем временный объект для совместимости
+
+
         class TempLandmark:
             def __init__(self, x, y, z):
                 self.x = x
@@ -247,15 +223,11 @@ class VideoProcessor:
         return self._convert_to_mini_rgbd(temp_landmarks, width, height)
     
     def _convert_to_mini_rgbd(self, pose_landmarks, width: int, height: int) -> List[Tuple[float, float, float, float]]:
-        """
-        Конвертировать MediaPipe Pose landmarks в формат MINI-RGBD (25 суставов).
-        Возвращает список (x_pixel, y_pixel, depth_mm, joint_id).
-        """
         if pose_landmarks is None:
-            # Возвращаем нули для всех суставов
+
             return [(0.0, 0.0, 0.0, i) for i in range(25)]
 
-        # Получаем основные точки
+
         nose = self._get_landmark_point(pose_landmarks, MP_NOSE)
         left_shoulder = self._get_landmark_point(pose_landmarks, MP_LEFT_SHOULDER)
         right_shoulder = self._get_landmark_point(pose_landmarks, MP_RIGHT_SHOULDER)
@@ -274,57 +246,56 @@ class VideoProcessor:
         left_foot_index = self._get_landmark_point(pose_landmarks, MP_LEFT_FOOT_INDEX)
         right_foot_index = self._get_landmark_point(pose_landmarks, MP_RIGHT_FOOT_INDEX)
 
-        # Вычисляем промежуточные точки
+
         hip_center = self._average_points(left_hip, right_hip)
         shoulder_center = self._average_points(left_shoulder, right_shoulder)
         left_upper_arm_mid = self._average_points(left_shoulder, left_elbow)
         right_upper_arm_mid = self._average_points(right_shoulder, right_elbow)
 
-        # Конвертируем в пиксели и depth
+
         def to_pixel_and_depth(point: Optional[Tuple[float, float, float]]) -> Tuple[float, float, float]:
-            """Конвертировать нормализованные координаты в пиксели и depth в мм."""
             if point is None:
                 return (0.0, 0.0, 0.0)
-            # MediaPipe использует нормализованные координаты (0-1)
-            # z в MediaPipe - это относительная глубина (примерно -1 до 1)
-            # Конвертируем в пиксели
+
+
+
             x_pixel = point[0] * width
             y_pixel = point[1] * height
-            # z в MediaPipe - относительная глубина, конвертируем в мм (примерно 500-1500 мм)
-            # Используем приближение: z=0 -> 1000мм, z=-1 -> 1500мм, z=1 -> 500мм
+
+
             depth_mm = 1000.0 - (point[2] * 500.0)
             return (x_pixel, y_pixel, depth_mm)
 
-        # Строим массив из 25 суставов MINI-RGBD
+
         joints = [
-            to_pixel_and_depth(hip_center),  # 0: global
-            to_pixel_and_depth(left_hip),  # 1: leftThigh
-            to_pixel_and_depth(right_hip),  # 2: rightThigh
-            to_pixel_and_depth(hip_center),  # 3: spine (используем hip_center)
-            to_pixel_and_depth(left_knee),  # 4: leftCalf
-            to_pixel_and_depth(right_knee),  # 5: rightCalf
-            to_pixel_and_depth(shoulder_center),  # 6: spine1
-            to_pixel_and_depth(left_ankle),  # 7: leftFoot
-            to_pixel_and_depth(right_ankle),  # 8: rightFoot
-            to_pixel_and_depth(shoulder_center),  # 9: spine2
-            to_pixel_and_depth(left_foot_index),  # 10: leftToes
-            to_pixel_and_depth(right_foot_index),  # 11: rightToes
-            to_pixel_and_depth(shoulder_center),  # 12: neck (используем shoulder_center)
-            to_pixel_and_depth(left_shoulder),  # 13: leftShoulder
-            to_pixel_and_depth(right_shoulder),  # 14: rightShoulder
-            to_pixel_and_depth(nose),  # 15: head (используем nose)
-            to_pixel_and_depth(left_upper_arm_mid),  # 16: leftUpperArm
-            to_pixel_and_depth(right_upper_arm_mid),  # 17: rightUpperArm
-            to_pixel_and_depth(left_elbow),  # 18: leftForeArm
-            to_pixel_and_depth(right_elbow),  # 19: rightForeArm
-            to_pixel_and_depth(left_wrist),  # 20: leftHand
-            to_pixel_and_depth(right_wrist),  # 21: rightHand
-            to_pixel_and_depth(left_index),  # 22: leftFingers
-            to_pixel_and_depth(right_index),  # 23: rightFingers
-            to_pixel_and_depth(nose),  # 24: noseVertex
+            to_pixel_and_depth(hip_center),
+            to_pixel_and_depth(left_hip),
+            to_pixel_and_depth(right_hip),
+            to_pixel_and_depth(hip_center),
+            to_pixel_and_depth(left_knee),
+            to_pixel_and_depth(right_knee),
+            to_pixel_and_depth(shoulder_center),
+            to_pixel_and_depth(left_ankle),
+            to_pixel_and_depth(right_ankle),
+            to_pixel_and_depth(shoulder_center),
+            to_pixel_and_depth(left_foot_index),
+            to_pixel_and_depth(right_foot_index),
+            to_pixel_and_depth(shoulder_center),
+            to_pixel_and_depth(left_shoulder),
+            to_pixel_and_depth(right_shoulder),
+            to_pixel_and_depth(nose),
+            to_pixel_and_depth(left_upper_arm_mid),
+            to_pixel_and_depth(right_upper_arm_mid),
+            to_pixel_and_depth(left_elbow),
+            to_pixel_and_depth(right_elbow),
+            to_pixel_and_depth(left_wrist),
+            to_pixel_and_depth(right_wrist),
+            to_pixel_and_depth(left_index),
+            to_pixel_and_depth(right_index),
+            to_pixel_and_depth(nose),
         ]
 
-        # Возвращаем с joint_id
+
         return [(x, y, depth, i) for i, (x, y, depth) in enumerate(joints)]
 
     def _save_keypoints(
@@ -339,47 +310,47 @@ class VideoProcessor:
         keypoints_dir = output_dir / "keypoints"
         keypoints_dir.mkdir(parents=True, exist_ok=True)
 
-        # Сохраняем jointlist.txt
+
         jointlist_path = keypoints_dir / "jointlist.txt"
         with open(jointlist_path, "w", encoding="utf-8") as f:
             for joint_name in MINI_RGBD_JOINT_NAMES:
                 f.write(f"{joint_name}\n")
 
-        # Создаем директории для 2Ddep и 3D
+
         joints_2ddep_dir = keypoints_dir / "joints_2Ddep"
         joints_3d_dir = keypoints_dir / "joints_3D"
         joints_2ddep_dir.mkdir(exist_ok=True)
         joints_3d_dir.mkdir(exist_ok=True)
 
-        # Сохраняем каждый кадр в формате MINI-RGBD
+
         for frame_data in all_keypoints:
             frame_num = frame_data["frame"]
             mini_rgbd = frame_data.get("mini_rgbd", [])
 
-            # Форматируем номер кадра как в MINI-RGBD (5 цифр с ведущими нулями)
+
             frame_str = f"{frame_num:05d}"
 
-            # Сохраняем 2D с depth (X Y depth jointID)
+
             file_2ddep = joints_2ddep_dir / f"syn_joints_2Ddep_{frame_str}.txt"
             with open(file_2ddep, "w", encoding="utf-8") as f:
                 for x, y, depth, joint_id in mini_rgbd:
                     f.write(f"{x:.2f} {y:.2f} {depth:.2f} {int(joint_id)}\n")
 
-            # Сохраняем 3D (X Y Z jointID в метрах)
-            # Конвертируем из пикселей в метры (предполагаем, что камера на расстоянии ~1м)
-            # Используем приближение: 1 пиксель ≈ 0.001 метра для типичного разрешения
+
+
+
             file_3d = joints_3d_dir / f"syn_joints_3D_{frame_str}.txt"
             with open(file_3d, "w", encoding="utf-8") as f:
                 for x, y, depth, joint_id in mini_rgbd:
-                    # Конвертируем пиксели в метры (приблизительно)
-                    # X, Y: из пикселей в метры (предполагаем FOV ~60 градусов)
+
+
                     x_m = (x - width / 2) * 0.001
                     y_m = (y - height / 2) * 0.001
-                    # Z (depth) уже в мм, конвертируем в метры
+
                     z_m = depth / 1000.0
                     f.write(f"{x_m:.4f} {y_m:.4f} {z_m:.4f} {int(joint_id)}\n")
 
-        # Сохраняем также JSON с полной информацией
+
         payload = {
             "format": "mini_rgbd",
             "source": "mediapipe_pose",

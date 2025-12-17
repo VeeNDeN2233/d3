@@ -1,11 +1,3 @@
-"""
-Продвинутые архитектуры автоэнкодеров для детекции аномалий.
-
-Варианты:
-1. Bidirectional LSTM + Attention
-2. Transformer-based
-3. Hybrid CNN-LSTM
-"""
 
 import logging
 from typing import Optional, Tuple
@@ -20,14 +12,6 @@ logger = logging.getLogger(__name__)
 
 
 class BidirectionalLSTMAutoencoder(nn.Module):
-    """
-    Bidirectional LSTM автоэнкодер с attention механизмом.
-    
-    Архитектура:
-    - Encoder: Bidirectional LSTM [256, 128, 64]
-    - Attention: Multi-head attention
-    - Decoder: LSTM [64, 128, 256, 75]
-    """
 
     def __init__(
         self,
@@ -39,25 +23,13 @@ class BidirectionalLSTMAutoencoder(nn.Module):
         num_attention_heads: int = 4,
         dropout: float = 0.2,
     ):
-        """
-        Инициализация Bidirectional LSTM автоэнкодера.
-        
-        Args:
-            input_size: Размер входного вектора
-            sequence_length: Длина последовательности
-            encoder_hidden_sizes: Размеры скрытых слоев энкодера
-            decoder_hidden_sizes: Размеры скрытых слоев декодера
-            latent_size: Размер латентного представления
-            num_attention_heads: Количество голов attention
-            dropout: Dropout rate
-        """
         super().__init__()
         
         self.input_size = input_size
         self.sequence_length = sequence_length
         self.latent_size = latent_size
         
-        # Encoder: Bidirectional LSTM
+
         self.encoder_lstms = nn.ModuleList()
         prev_size = input_size
         
@@ -72,10 +44,10 @@ class BidirectionalLSTMAutoencoder(nn.Module):
                     dropout=dropout if i < len(encoder_hidden_sizes) - 1 else 0,
                 )
             )
-            # Bidirectional удваивает hidden_size
+
             prev_size = hidden_size * 2
         
-        # Attention механизм
+
         self.attention = nn.MultiheadAttention(
             embed_dim=prev_size,
             num_heads=num_attention_heads,
@@ -83,10 +55,10 @@ class BidirectionalLSTMAutoencoder(nn.Module):
             dropout=dropout,
         )
         
-        # Проекция в латентное пространство
+
         self.latent_proj = nn.Linear(prev_size, latent_size)
         
-        # Decoder: LSTM
+
         self.decoder_lstms = nn.ModuleList()
         prev_size = latent_size
         
@@ -102,7 +74,7 @@ class BidirectionalLSTMAutoencoder(nn.Module):
             )
             prev_size = hidden_size
         
-        # Output projection
+
         self.output_proj = nn.Linear(decoder_hidden_sizes[-1], input_size)
         
         logger.info(
@@ -113,67 +85,40 @@ class BidirectionalLSTMAutoencoder(nn.Module):
         )
 
     def encode(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Кодирование последовательности.
-        
-        Args:
-            x: Входная последовательность (batch, seq_len, input_size)
-        
-        Returns:
-            Tuple (latent, attention_weights)
-        """
-        # Проходим через bidirectional LSTM слои
+
         h = x
         for lstm in self.encoder_lstms:
             h, _ = lstm(h)
-            # h shape: (batch, seq_len, hidden_size * 2)
+
         
-        # Применяем attention
+
         attended, attention_weights = self.attention(h, h, h)
-        # attended shape: (batch, seq_len, hidden_size * 2)
+
         
-        # Берем последний кадр после attention
-        latent = attended[:, -1, :]  # (batch, hidden_size * 2)
+
+        latent = attended[:, -1, :]
         
-        # Проекция в латентное пространство
-        latent = self.latent_proj(latent)  # (batch, latent_size)
+
+        latent = self.latent_proj(latent)
         
         return latent, attention_weights
 
     def decode(self, latent: torch.Tensor) -> torch.Tensor:
-        """
-        Декодирование латентного представления.
-        
-        Args:
-            latent: Латентное представление (batch, latent_size)
-        
-        Returns:
-            Восстановленная последовательность (batch, seq_len, input_size)
-        """
-        # Расширяем латентное представление на всю последовательность
+
         latent_expanded = latent.unsqueeze(1).repeat(1, self.sequence_length, 1)
-        # latent_expanded shape: (batch, seq_len, latent_size)
+
         
-        # Проходим через LSTM слои
+
         h = latent_expanded
         for lstm in self.decoder_lstms:
             h, _ = lstm(h)
         
-        # Output projection
+
         reconstructed = self.output_proj(h)
         
         return reconstructed
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Forward pass.
-        
-        Args:
-            x: Входная последовательность (batch, seq_len, input_size)
-        
-        Returns:
-            Tuple (reconstructed, latent)
-        """
         latent, attention_weights = self.encode(x)
         reconstructed = self.decode(latent)
         
@@ -181,11 +126,6 @@ class BidirectionalLSTMAutoencoder(nn.Module):
 
 
 class TransformerAutoencoder(nn.Module):
-    """
-    Transformer-based автоэнкодер для детекции аномалий.
-    
-    Использует self-attention для захвата долгосрочных зависимостей.
-    """
 
     def __init__(
         self,
@@ -199,20 +139,6 @@ class TransformerAutoencoder(nn.Module):
         dropout: float = 0.1,
         latent_size: int = 128,
     ):
-        """
-        Инициализация Transformer автоэнкодера.
-        
-        Args:
-            input_size: Размер входного вектора
-            sequence_length: Длина последовательности
-            d_model: Размерность модели
-            nhead: Количество голов attention
-            num_encoder_layers: Количество слоев энкодера
-            num_decoder_layers: Количество слоев декодера
-            dim_feedforward: Размерность feedforward сети
-            dropout: Dropout rate
-            latent_size: Размер латентного представления
-        """
         super().__init__()
         
         self.input_size = input_size
@@ -220,13 +146,13 @@ class TransformerAutoencoder(nn.Module):
         self.d_model = d_model
         self.latent_size = latent_size
         
-        # Input projection
+
         self.input_proj = nn.Linear(input_size, d_model)
         
-        # Positional encoding
+
         self.pos_encoder = PositionalEncoding(d_model, dropout, sequence_length)
         
-        # Transformer encoder
+
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=nhead,
@@ -236,13 +162,13 @@ class TransformerAutoencoder(nn.Module):
         )
         self.encoder = nn.TransformerEncoder(encoder_layer, num_encoder_layers)
         
-        # Latent projection
+
         self.latent_proj = nn.Linear(d_model, latent_size)
         
-        # Latent expansion
+
         self.latent_expand = nn.Linear(latent_size, d_model)
         
-        # Transformer decoder
+
         decoder_layer = nn.TransformerDecoderLayer(
             d_model=d_model,
             nhead=nhead,
@@ -252,7 +178,7 @@ class TransformerAutoencoder(nn.Module):
         )
         self.decoder = nn.TransformerDecoder(decoder_layer, num_decoder_layers)
         
-        # Output projection
+
         self.output_proj = nn.Linear(d_model, input_size)
         
         logger.info(
@@ -263,44 +189,41 @@ class TransformerAutoencoder(nn.Module):
         )
 
     def encode(self, x: torch.Tensor) -> torch.Tensor:
-        """Кодирование последовательности."""
-        # Input projection
-        x = self.input_proj(x)  # (batch, seq_len, d_model)
+
+        x = self.input_proj(x)
         
-        # Positional encoding
+
         x = self.pos_encoder(x)
         
-        # Transformer encoder
-        encoded = self.encoder(x)  # (batch, seq_len, d_model)
+
+        encoded = self.encoder(x)
         
-        # Берем последний кадр
-        latent = encoded[:, -1, :]  # (batch, d_model)
+
+        latent = encoded[:, -1, :]
         
-        # Проекция в латентное пространство
-        latent = self.latent_proj(latent)  # (batch, latent_size)
+
+        latent = self.latent_proj(latent)
         
         return latent
 
     def decode(self, latent: torch.Tensor) -> torch.Tensor:
-        """Декодирование латентного представления."""
-        # Расширяем латентное представление
-        latent_expanded = self.latent_expand(latent)  # (batch, d_model)
+
+        latent_expanded = self.latent_expand(latent)
         latent_expanded = latent_expanded.unsqueeze(1).repeat(1, self.sequence_length, 1)
-        # (batch, seq_len, d_model)
+
         
-        # Positional encoding для декодера
+
         latent_expanded = self.pos_encoder(latent_expanded)
         
-        # Transformer decoder (self-attention)
-        decoded = self.decoder(latent_expanded, latent_expanded)  # (batch, seq_len, d_model)
+
+        decoded = self.decoder(latent_expanded, latent_expanded)
         
-        # Output projection
-        reconstructed = self.output_proj(decoded)  # (batch, seq_len, input_size)
+
+        reconstructed = self.output_proj(decoded)
         
         return reconstructed
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Forward pass."""
         latent = self.encode(x)
         reconstructed = self.decode(latent)
         
@@ -308,7 +231,6 @@ class TransformerAutoencoder(nn.Module):
 
 
 class PositionalEncoding(nn.Module):
-    """Positional encoding для Transformer."""
     
     def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
         super().__init__()
@@ -319,14 +241,10 @@ class PositionalEncoding(nn.Module):
         pe = torch.zeros(max_len, d_model)
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0)  # (1, max_len, d_model)
+        pe = pe.unsqueeze(0)
         self.register_buffer('pe', pe)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            x: Tensor, shape (batch, seq_len, d_model)
-        """
         x = x + self.pe[:, :x.size(1), :]
         return self.dropout(x)
 

@@ -1,9 +1,3 @@
-"""
-Загрузчик данных из MINI-RGBD датасета.
-
-Загружает ТОЛЬКО RGB изображения и извлекает ключевые точки через MediaPipe.
-Строгое разделение по последовательностям без утечки данных.
-"""
 
 import logging
 from pathlib import Path
@@ -18,14 +12,6 @@ logger = logging.getLogger(__name__)
 
 
 class MiniRGBDDataLoader:
-    """
-    Загружает ТОЛЬКО RGB изображения из MINI-RGBD.
-    
-    - Загружает все 12 последовательностей (01-12)
-    - Разделяет: 8 seq → train, 2 seq → val, 2 seq → test (по папкам!)
-    - НИКАКОЙ перетасовки кадров между последовательностями
-    - Извлекает ключевые точки через MediaPipe (как с реальными видео)
-    """
 
     def __init__(
         self,
@@ -37,27 +23,15 @@ class MiniRGBDDataLoader:
         min_detection_confidence: float = 0.5,
         min_tracking_confidence: float = 0.5,
     ):
-        """
-        Инициализация загрузчика данных.
-        
-        Args:
-            data_root: Путь к корневой папке MINI-RGBD_web
-            train_sequences: Список номеров последовательностей для обучения [1,2,3,4,5,6,7,8]
-            val_sequences: Список номеров последовательностей для валидации [9,10]
-            test_sequences: Список номеров последовательностей для теста [11,12]
-            model_complexity: Сложность модели MediaPipe (0, 1, или 2)
-            min_detection_confidence: Минимальная уверенность детекции
-            min_tracking_confidence: Минимальная уверенность трекинга
-        """
         self.data_root = Path(data_root)
         self.train_sequences = train_sequences
         self.val_sequences = val_sequences
         self.test_sequences = test_sequences
         
-        # Инициализация MediaPipe Pose
+
         self.mp_pose = mp.solutions.pose
         self.pose = self.mp_pose.Pose(
-            static_image_mode=True,  # Для статических изображений
+            static_image_mode=True,
             model_complexity=model_complexity,
             enable_segmentation=False,
             min_detection_confidence=min_detection_confidence,
@@ -70,12 +44,10 @@ class MiniRGBDDataLoader:
         logger.info(f"Test sequences: {test_sequences}")
 
     def _get_sequence_path(self, sequence_num: int) -> Path:
-        """Получить путь к последовательности."""
         seq_str = f"{sequence_num:02d}"
         return self.data_root / seq_str / "rgb"
 
     def _load_rgb_image(self, image_path: Path) -> Optional[np.ndarray]:
-        """Загрузить RGB изображение."""
         if not image_path.exists():
             logger.warning(f"Изображение не найдено: {image_path}")
             return None
@@ -85,18 +57,11 @@ class MiniRGBDDataLoader:
             logger.warning(f"Не удалось загрузить изображение: {image_path}")
             return None
         
-        # Конвертируем BGR → RGB для MediaPipe
+
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         return img_rgb
 
     def _extract_keypoints(self, image: np.ndarray) -> Optional[np.ndarray]:
-        """
-        Извлечь ключевые точки через MediaPipe.
-        
-        Returns:
-            Массив формы (33, 4) где каждая точка имеет [x, y, z, visibility]
-            или None если поза не обнаружена
-        """
         results = self.pose.process(image)
         
         if results.pose_landmarks is None:
@@ -105,10 +70,10 @@ class MiniRGBDDataLoader:
         keypoints = []
         for landmark in results.pose_landmarks.landmark:
             keypoints.append([
-                landmark.x,  # нормализованная координата X
-                landmark.y,  # нормализованная координата Y
-                landmark.z,  # относительная глубина
-                getattr(landmark, 'visibility', 0.0),  # уверенность
+                landmark.x,
+                landmark.y,
+                landmark.z,
+                getattr(landmark, 'visibility', 0.0),
             ])
         
         return np.array(keypoints, dtype=np.float32)
@@ -116,25 +81,13 @@ class MiniRGBDDataLoader:
     def load_sequence(
         self, sequence_num: int, max_frames: Optional[int] = None
     ) -> Tuple[List[np.ndarray], List[Optional[np.ndarray]]]:
-        """
-        Загрузить последовательность RGB изображений и извлечь ключевые точки.
-        
-        Args:
-            sequence_num: Номер последовательности (1-12)
-            max_frames: Максимальное количество кадров (None = все)
-        
-        Returns:
-            Tuple (images, keypoints):
-            - images: Список RGB изображений
-            - keypoints: Список массивов ключевых точек (33, 4) или None
-        """
         rgb_dir = self._get_sequence_path(sequence_num)
         
         if not rgb_dir.exists():
             logger.error(f"Директория не найдена: {rgb_dir}")
             return [], []
         
-        # Получаем все RGB изображения, отсортированные по имени
+
         image_files = sorted(rgb_dir.glob("syn_*.png"))
         
         if max_frames is not None:
@@ -146,14 +99,14 @@ class MiniRGBDDataLoader:
         keypoints_list = []
         
         for img_path in image_files:
-            # Загружаем изображение
+
             img = self._load_rgb_image(img_path)
             if img is None:
                 continue
             
             images.append(img)
             
-            # Извлекаем ключевые точки
+
             kp = self._extract_keypoints(img)
             keypoints_list.append(kp)
         
@@ -167,12 +120,6 @@ class MiniRGBDDataLoader:
     def load_train_data(
         self, max_frames_per_seq: Optional[int] = None
     ) -> Tuple[List[np.ndarray], List[Optional[np.ndarray]]]:
-        """
-        Загрузить данные для обучения.
-        
-        Returns:
-            Tuple (all_images, all_keypoints) - объединенные данные из всех train последовательностей
-        """
         logger.info("Загрузка данных для обучения...")
         
         all_images = []
@@ -189,7 +136,6 @@ class MiniRGBDDataLoader:
     def load_val_data(
         self, max_frames_per_seq: Optional[int] = None
     ) -> Tuple[List[np.ndarray], List[Optional[np.ndarray]]]:
-        """Загрузить данные для валидации."""
         logger.info("Загрузка данных для валидации...")
         
         all_images = []
@@ -206,7 +152,6 @@ class MiniRGBDDataLoader:
     def load_test_data(
         self, max_frames_per_seq: Optional[int] = None
     ) -> Tuple[List[np.ndarray], List[Optional[np.ndarray]]]:
-        """Загрузить данные для теста."""
         logger.info("Загрузка данных для теста...")
         
         all_images = []
@@ -221,7 +166,6 @@ class MiniRGBDDataLoader:
         return all_images, all_keypoints
 
     def get_sequence_info(self) -> Dict[str, List[int]]:
-        """Получить информацию о разделении последовательностей."""
         return {
             "train": self.train_sequences,
             "val": self.val_sequences,
@@ -229,7 +173,6 @@ class MiniRGBDDataLoader:
         }
 
     def __del__(self):
-        """Закрыть MediaPipe Pose при удалении."""
         try:
             if hasattr(self, 'pose'):
                 self.pose.close()

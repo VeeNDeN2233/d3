@@ -1,6 +1,3 @@
-"""
-Кэширование результатов анализа для оптимизации производительности.
-"""
 
 import json
 import hashlib
@@ -13,48 +10,19 @@ logger = logging.getLogger(__name__)
 
 
 class AnalysisCache:
-    """Кэш результатов анализа."""
     
     def __init__(self, cache_dir: Path = Path("cache/analysis")):
-        """
-        Инициализация кэша.
-        
-        Args:
-            cache_dir: Директория для хранения кэша
-        """
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self.max_age_days = 7  # Результаты хранятся 7 дней
+        self.max_age_days = 7
     
     def _get_cache_key(self, video_path: Path, age_weeks: int, gestational_age: int) -> str:
-        """
-        Создать ключ кэша на основе параметров.
-        
-        Args:
-            video_path: Путь к видео
-            age_weeks: Возраст ребенка в неделях
-            gestational_age: Гестационный возраст
-        
-        Returns:
-            Хеш ключ
-        """
-        # Используем путь, размер файла, дату модификации и параметры
+
         stat = video_path.stat()
         key_data = f"{video_path}_{stat.st_size}_{stat.st_mtime}_{age_weeks}_{gestational_age}"
         return hashlib.md5(key_data.encode()).hexdigest()
     
     def get(self, video_path: Path, age_weeks: int, gestational_age: int) -> Optional[Dict[str, Any]]:
-        """
-        Получить результаты из кэша.
-        
-        Args:
-            video_path: Путь к видео
-            age_weeks: Возраст ребенка в неделях
-            gestational_age: Гестационный возраст
-        
-        Returns:
-            Результаты анализа или None
-        """
         try:
             cache_key = self._get_cache_key(video_path, age_weeks, gestational_age)
             cache_file = self.cache_dir / f"{cache_key}.json"
@@ -62,18 +30,18 @@ class AnalysisCache:
             if not cache_file.exists():
                 return None
             
-            # Проверяем возраст кэша
+
             cache_age = datetime.now() - datetime.fromtimestamp(cache_file.stat().st_mtime)
             if cache_age > timedelta(days=self.max_age_days):
                 logger.info(f"Кэш устарел, удаляем: {cache_file}")
                 cache_file.unlink()
                 return None
             
-            # Загружаем из кэша
+
             with open(cache_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
-            # Проверяем, что исходный файл не изменился
+
             if 'video_stat' in data:
                 current_stat = video_path.stat()
                 cached_stat = data['video_stat']
@@ -97,23 +65,11 @@ class AnalysisCache:
         gestational_age: int,
         results: Dict[str, Any]
     ) -> bool:
-        """
-        Сохранить результаты в кэш.
-        
-        Args:
-            video_path: Путь к видео
-            age_weeks: Возраст ребенка в неделях
-            gestational_age: Гестационный возраст
-            results: Результаты анализа
-        
-        Returns:
-            Успех операции
-        """
         try:
             cache_key = self._get_cache_key(video_path, age_weeks, gestational_age)
             cache_file = self.cache_dir / f"{cache_key}.json"
             
-            # Сохраняем статистику файла для проверки актуальности
+
             stat = video_path.stat()
             cache_data = {
                 'results': results,
@@ -140,7 +96,6 @@ class AnalysisCache:
             return False
     
     def cleanup_old(self):
-        """Очистить устаревшие записи кэша."""
         try:
             deleted_count = 0
             cutoff_time = datetime.now() - timedelta(days=self.max_age_days)

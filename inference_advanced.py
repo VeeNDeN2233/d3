@@ -1,6 +1,3 @@
-"""
-Инференс для продвинутой модели (Bidirectional LSTM + Attention).
-"""
 
 import argparse
 import json
@@ -8,10 +5,10 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 
-# Устанавливаем backend для matplotlib перед импортом pyplot
-# Это необходимо для работы в Flask/серверном окружении без GUI
+
+
 import matplotlib
-matplotlib.use('Agg')  # Используем non-interactive backend
+matplotlib.use('Agg')
 
 import cv2
 import matplotlib.pyplot as plt
@@ -33,15 +30,6 @@ logger = logging.getLogger(__name__)
 
 
 def convert_numpy_types(obj: Any) -> Any:
-    """
-    Рекурсивно конвертирует numpy типы в стандартные Python типы для JSON сериализации.
-    
-    Args:
-        obj: Объект для конвертации
-    
-    Returns:
-        Объект с конвертированными типами
-    """
     if isinstance(obj, np.integer):
         return int(obj)
     elif isinstance(obj, np.floating):
@@ -57,7 +45,7 @@ def convert_numpy_types(obj: Any) -> Any:
     elif isinstance(obj, (str, int, float, bool, type(None))):
         return obj
     else:
-        # Для других типов пытаемся преобразовать в строку
+
         try:
             return str(obj)
         except:
@@ -67,19 +55,7 @@ def convert_numpy_types(obj: Any) -> Any:
 def load_model_and_detector(
     checkpoint_path: Path, config: dict, device: torch.device, model_type: str = "bidir_lstm"
 ) -> Tuple[nn.Module, AnomalyDetector]:
-    """
-    Загрузить продвинутую модель и детектор из checkpoint.
-    
-    Args:
-        checkpoint_path: Путь к checkpoint
-        config: Конфигурация модели
-        device: Устройство (GPU)
-        model_type: Тип модели ("bidir_lstm" или "transformer")
-    
-    Returns:
-        Tuple (model, detector)
-    """
-    # Создаем модель
+
     if model_type == "bidir_lstm":
         model = BidirectionalLSTMAutoencoder(
             input_size=config["model"]["input_size"],
@@ -93,14 +69,14 @@ def load_model_and_detector(
     else:
         raise ValueError(f"Модель {model_type} не поддерживается")
     
-    # Загружаем веса
+
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
     
     logger.info(f"Модель загружена из {checkpoint_path}")
     
-    # Загружаем детектор
+
     detector_path = checkpoint_path.parent / "anomaly_detector_advanced.pt"
     if not detector_path.exists():
         raise FileNotFoundError(f"Детектор не найден: {detector_path}")
@@ -120,7 +96,6 @@ def process_video(
     detector: AnomalyDetector,
     config: dict,
 ) -> Tuple[List[np.ndarray], List[float], List[bool], np.ndarray]:
-    """Обработать видео и получить предсказания аномалий."""
     logger.info(f"Обработка видео: {video_path}")
     
     temp_output = video_path.parent / f"temp_{video_path.name}"
@@ -132,45 +107,45 @@ def process_video(
     if not result["success"]:
         raise RuntimeError(f"Ошибка обработки видео: {result.get('error')}")
     
-    # Загружаем ключевые точки
+
     keypoints_path = Path(result["keypoints_path"]) / "keypoints.json"
     with open(keypoints_path, "r", encoding="utf-8") as f:
         keypoints_data = json.load(f)
     
-    # Извлекаем ключевые точки
+
     keypoints_list = []
     for frame_data in keypoints_data["frames"]:
         landmarks = frame_data.get("landmarks")
-        # Всегда возвращаем массив, даже если landmarks не обнаружены
+
         if landmarks and len(landmarks) == 33:
             kp = np.array(
                 [[lm["x"], lm["y"], lm["z"], lm.get("visibility", 0.0)] for lm in landmarks],
                 dtype=np.float32,
             )
         else:
-            # Заполняем нулями, если landmarks не обнаружены или неполные
+
             kp = np.zeros((33, 4), dtype=np.float32)
         
         keypoints_list.append(kp)
     
-    # Обрабатываем ключевые точки
+
     sequences = pose_processor.process_keypoints(keypoints_list)
     
     if len(sequences) == 0:
         logger.warning("Нет валидных последовательностей")
         return keypoints_list, [], []
     
-    # Преобразуем в плоские векторы (оптимизировано)
+
     flattened_sequences = []
     for seq in sequences:
         flattened_sequences.append(pose_processor.flatten_sequence(seq))
-    sequences_array = np.array(flattened_sequences, dtype=np.float32)  # (N, 30, 75)
+    sequences_array = np.array(flattened_sequences, dtype=np.float32)
     sequences_tensor = torch.FloatTensor(sequences_array)
     
-    # Предсказание аномалий
+
     is_anomaly, errors = detector.predict(sequences_tensor.to(detector.device))
     
-    # Удаляем временный файл
+
     if temp_output.exists():
         temp_output.unlink()
     
@@ -184,19 +159,18 @@ def visualize_results(
     video_name: str,
     threshold: Optional[float] = None,
 ) -> Dict[str, Path]:
-    """Визуализация результатов."""
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # График ошибки реконструкции
+
     fig, ax = plt.subplots(figsize=(12, 6))
     frames = np.arange(len(errors))
     ax.plot(frames, errors, label="Reconstruction Error", linewidth=2, color="blue")
     
-    # Порог аномалии
+
     if threshold is not None:
         ax.axhline(y=threshold, color="r", linestyle="--", label=f"Anomaly Threshold ({threshold:.4f})", linewidth=2)
     
-    # Помечаем аномальные последовательности
+
     anomaly_frames = [i for i, is_anom in enumerate(is_anomaly) if is_anom]
     if anomaly_frames:
         ax.scatter(anomaly_frames, [errors[i] for i in anomaly_frames], 
@@ -227,17 +201,16 @@ def generate_report(
     gestational_age_weeks: Optional[float] = None,
     sequences_array: Optional[np.ndarray] = None,
 ) -> Dict:
-    """Генерация медицинского отчета в формате GMA."""
     if len(errors) == 0:
         return {}
     
     errors_array = np.array(errors)
     anomaly_rate = np.mean(is_anomaly) * 100
     
-    # Определяем уровень риска на основе GMA критериев
+
     mean_error = float(errors_array.mean())
     
-    # GMA критерии риска
+
     if mean_error > detector.threshold * 1.5:
         risk_level = "high"
         gma_assessment = "АНОМАЛЬНЫЕ общие движения"
@@ -251,9 +224,9 @@ def generate_report(
         gma_assessment = "НОРМАЛЬНЫЕ общие движения"
         cp_risk = "НИЗКИЙ риск"
     
-    # Детальный анализ аномалий по суставам
-    # ВАЖНО: Анализируем ВСЕГДА, даже если risk_level = "low"
-    # чтобы обнаружить отсутствие движений независимо от ошибки реконструкции
+
+
+
     detailed_analysis = {}
     if sequences_array is not None and len(sequences_array) > 0:
         try:
@@ -263,28 +236,28 @@ def generate_report(
             sequences_np = np.array(sequences_array)
             errors_np = np.array(errors)
             
-            # Загружаем нормальные статистики из тренировочных данных
+
             normal_statistics = get_normal_statistics()
             
-            # Анализируем амплитуду движений для ВСЕХ последовательностей
-            # (не только аномальных по ошибке реконструкции)
+
+
             detailed_analysis = analyze_joint_errors(
                 sequences_np,
                 errors_np,
                 detector.threshold,
                 normal_statistics=normal_statistics,
                 age_weeks=age_weeks,
-                analyze_all_sequences=True  # Анализировать все, не только аномальные
+                analyze_all_sequences=True
             )
             
-            # Проверяем аномалии амплитуды независимо от ошибки реконструкции
+
             amplitude_analysis = detailed_analysis.get("amplitude_analysis", {})
             if amplitude_analysis.get("has_amplitude_anomalies", False):
-                # Если есть критическое снижение амплитуды, повышаем уровень риска
+
                 if amplitude_analysis.get("critical_amplitude_drop", False):
                     if risk_level == "low":
                         risk_level = "high"
-                        anomaly_rate = 100.0  # Форсированно помечаем как аномалию
+                        anomaly_rate = 100.0
                         gma_assessment = "АНОМАЛЬНЫЕ общие движения (критическое снижение активности)"
                         cp_risk = "ВЫСОКИЙ риск (отсутствие/критическое снижение движений)"
                     elif risk_level == "medium":
@@ -299,16 +272,16 @@ def generate_report(
             logger.warning(f"Ошибка детального анализа: {e}")
             detailed_analysis = {}
     
-    # Определяем признаки аномалий на основе детального анализа
+
     detected_signs = []
     if detailed_analysis.get("has_anomalies", False):
-        # Асимметрия
+
         asymmetry = detailed_analysis.get("asymmetry", {})
         if asymmetry.get("has_asymmetry", False):
             for finding in asymmetry.get("findings", []):
                 detected_signs.append(finding["description"])
         
-        # Анализ суставов
+
         joint_analysis = detailed_analysis.get("joint_analysis", {})
         for finding in joint_analysis.get("findings", []):
             if finding["type"] == "reduced_movement":
@@ -316,17 +289,17 @@ def generate_report(
             elif finding["type"] == "high_speed":
                 detected_signs.append(finding["description"])
         
-        # Скорость движений
+
         speed_analysis = detailed_analysis.get("speed_analysis", {})
         for finding in speed_analysis.get("findings", []):
             detected_signs.append(finding["description"])
         
-        # Амплитуда движений
+
         amplitude_analysis = detailed_analysis.get("amplitude_analysis", {})
         for finding in amplitude_analysis.get("findings", []):
             detected_signs.append(finding["description"])
     
-    # Fallback если детальный анализ недоступен
+
     if len(detected_signs) == 0:
         if anomaly_rate > 30:
             detected_signs.append("высокая частота аномальных паттернов")
@@ -335,7 +308,7 @@ def generate_report(
         if len(detected_signs) == 0 and risk_level != "low":
             detected_signs.append("отклонения от нормальных паттернов")
     
-    # Рекомендации на основе GMA
+
     recommendations = []
     if risk_level == "low":
         recommendations.append("✅ Рекомендация: Плановая оценка в 4 месяца")
@@ -343,13 +316,13 @@ def generate_report(
     elif risk_level == "medium":
         recommendations.append("⚠️ Рекомендация: Повторная оценка через 2-4 недели")
         recommendations.append("Наблюдение у педиатра")
-    else:  # high
+    else:
         recommendations.append("🔴 Рекомендация: СРОЧНАЯ консультация детского невролога")
         recommendations.append("Начать раннее вмешательство")
         if detected_signs:
             recommendations.append(f"Выявлены признаки: {', '.join(detected_signs)}")
     
-    # Информация о возрасте
+
     age_info = {}
     if age_weeks is not None:
         age_info["age_weeks"] = float(age_weeks)
@@ -397,10 +370,10 @@ def generate_report(
         "detailed_analysis": detailed_analysis,
     }
     
-    # Конвертируем numpy типы в стандартные Python типы для JSON
+
     report_serializable = convert_numpy_types(report)
     
-    # Сохраняем отчет
+
     report_path = output_dir / "medical_report.json"
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(report_serializable, f, indent=2, ensure_ascii=False)
@@ -423,22 +396,22 @@ def main():
     
     args = parser.parse_args()
     
-    # Загружаем конфигурацию
+
     with open(args.config, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
     
-    # Проверяем GPU
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if device.type != "cuda":
         raise RuntimeError("Требуется GPU для инференса!")
     
     logger.info(f"Используется устройство: {device}")
     
-    # Загружаем модель и детектор
+
     checkpoint_path = Path(args.checkpoint)
     model, detector = load_model_and_detector(checkpoint_path, config, device, args.model_type)
     
-    # Инициализация процессоров
+
     video_processor = VideoProcessor(
         model_complexity=config["pose"]["model_complexity"],
         min_detection_confidence=config["pose"]["min_detection_confidence"],
@@ -455,13 +428,13 @@ def main():
         rotate_to_canonical=config["pose"].get("rotate_to_canonical", False),
     )
     
-    # Обработка видео
+
     video_path = Path(args.video)
     keypoints_list, errors, is_anomaly = process_video(
         video_path, video_processor, pose_processor, detector, config
     )
     
-    # Определяем директорию для результатов
+
     if args.output:
         output_dir = Path(args.output)
     else:
@@ -469,10 +442,10 @@ def main():
     
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Визуализация
+
     visualize_results(errors, is_anomaly, output_dir, video_path.stem, detector.threshold)
     
-    # Генерация отчета
+
     if args.save_report:
         report = generate_report(video_path, errors, is_anomaly, detector, output_dir)
         

@@ -1,6 +1,3 @@
-"""
-Core модули для управления состоянием и бизнес-логикой приложения.
-"""
 
 from .state_manager import AppState, StateManager, AnalysisStep
 from .auth_handler import AuthHandler

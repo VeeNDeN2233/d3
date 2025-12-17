@@ -1,6 +1,3 @@
-"""
-Обучение продвинутой модели (Bidirectional LSTM + Attention) с улучшенной нормализацией.
-"""
 
 import argparse
 import logging
@@ -29,7 +26,6 @@ logger = logging.getLogger(__name__)
 
 
 def load_config(config_path: str) -> Dict:
-    """Загрузить конфигурацию из YAML файла."""
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
     return config
@@ -42,22 +38,9 @@ def prepare_data(
     max_frames_per_seq: Optional[int] = None,
     augmentation: Optional[DataAugmentation] = None,
 ) -> List[np.ndarray]:
-    """
-    Подготовить данные для обучения/валидации/теста.
-    
-    Args:
-        data_loader: Загрузчик данных
-        pose_processor: Процессор поз
-        split: Раздел данных ("train", "val", "test")
-        max_frames_per_seq: Максимальное количество кадров на последовательность
-        augmentation: Объект аугментации (только для train)
-    
-    Returns:
-        Список последовательностей
-    """
     logger.info(f"Подготовка данных для {split}...")
     
-    # Загрузка данных
+
     if split == "train":
         images, keypoints = data_loader.load_train_data(max_frames_per_seq)
     elif split == "val":
@@ -69,22 +52,22 @@ def prepare_data(
     
     logger.info(f"Загружено {len(keypoints)} кадров для {split}")
     
-    # Фильтруем None значения
+
     keypoints_filtered = [kp for kp in keypoints if kp is not None]
     
     if len(keypoints_filtered) == 0:
         logger.warning(f"Нет валидных ключевых точек для {split}")
         return []
     
-    # Обработка в последовательности
+
     sequences = pose_processor.process_keypoints(keypoints_filtered)
     
-    # Аугментация данных (только для train)
+
     if split == "train" and augmentation is not None:
         logger.info("Применение аугментации данных...")
         augmented_sequences = []
         for seq in sequences:
-            # Применяем аугментацию к последовательности
+
             augmented_seq = augmentation.augment_keypoints(seq, apply_all=True)
             augmented_sequences.append(augmented_seq)
         sequences.extend(augmented_sequences)
@@ -103,13 +86,12 @@ def train_epoch(
     scaler: Optional[GradScaler] = None,
     use_amp: bool = True,
 ) -> float:
-    """Обучить модель на одной эпохе."""
     model.train()
     total_loss = 0.0
     num_batches = 0
     
     for batch in train_loader:
-        # DataLoader возвращает кортеж, извлекаем тензор
+
         if isinstance(batch, (list, tuple)):
             batch = batch[0]
         
@@ -143,14 +125,13 @@ def validate(
     criterion: nn.Module,
     device: torch.device,
 ) -> float:
-    """Валидация модели."""
     model.eval()
     total_loss = 0.0
     num_batches = 0
     
     with torch.no_grad():
         for batch in val_loader:
-            # DataLoader возвращает кортеж, извлекаем тензор
+
             if isinstance(batch, (list, tuple)):
                 batch = batch[0]
             
@@ -186,21 +167,21 @@ def main():
     
     args = parser.parse_args()
     
-    # Загрузка конфигурации
+
     config = load_config(args.config)
     
-    # Проверка GPU
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if device.type != "cuda":
         raise RuntimeError("Требуется GPU для обучения!")
     
     logger.info(f"Используется устройство: {device} ({torch.cuda.get_device_name(0)})")
     
-    # Создание директории для checkpoints
+
     checkpoint_path = Path(args.checkpoint)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     
-    # Инициализация загрузчика данных
+
     data_loader = MiniRGBDDataLoader(
         data_root=config["data"]["mini_rgbd_path"],
         train_sequences=config["data"]["train_sequences"],
@@ -211,7 +192,7 @@ def main():
         min_tracking_confidence=config["pose"]["min_tracking_confidence"],
     )
     
-    # Инициализация процессора поз
+
     pose_processor = PoseProcessor(
         sequence_length=config["pose"]["sequence_length"],
         sequence_stride=config["pose"]["sequence_stride"],
@@ -222,7 +203,7 @@ def main():
         rotate_to_canonical=config["pose"].get("rotate_to_canonical", False),
     )
     
-    # Инициализация аугментации (только для train)
+
     augmentation = None
     if config.get("augmentation", {}).get("enabled", False) and config["pose"].get("augmentation", {}).get("enabled", False):
         aug_config = config["pose"]["augmentation"]
@@ -235,7 +216,7 @@ def main():
         )
         logger.info("Аугментация данных включена")
     
-    # Подготовка данных
+
     max_frames = config["data"].get("max_frames_per_seq")
     
     train_sequences = prepare_data(
@@ -251,14 +232,14 @@ def main():
     if len(train_sequences) == 0:
         raise ValueError("Нет данных для обучения! Проверьте путь к датасету в config.yaml")
     
-    # Преобразование в тензоры
+
     train_tensor = torch.FloatTensor(np.array(train_sequences))
     val_tensor = torch.FloatTensor(np.array(val_sequences))
     
     logger.info(f"Размер train данных: {train_tensor.shape}")
     logger.info(f"Размер val данных: {val_tensor.shape}")
     
-    # DataLoader
+
     train_dataset = TensorDataset(train_tensor)
     val_dataset = TensorDataset(val_tensor)
     
@@ -275,7 +256,7 @@ def main():
         num_workers=0,
     )
     
-    # Создание модели
+
     model = BidirectionalLSTMAutoencoder(
         input_size=config["model"]["input_size"],
         sequence_length=config["pose"]["sequence_length"],
@@ -288,14 +269,14 @@ def main():
     
     logger.info(f"Модель создана: {sum(p.numel() for p in model.parameters())} параметров")
     
-    # Оптимизатор
+
     optimizer = optim.Adam(
         model.parameters(),
         lr=config["training"]["learning_rate"],
         weight_decay=config["training"]["weight_decay"],
     )
     
-    # Scheduler
+
     scheduler = None
     if config["training"]["scheduler"] == "cosine":
         scheduler = optim.lr_scheduler.CosineAnnealingLR(
@@ -303,14 +284,14 @@ def main():
             T_max=config["training"]["num_epochs"],
         )
     
-    # Loss function
+
     criterion = nn.MSELoss()
     
-    # Mixed precision
+
     use_amp = config["training"].get("use_amp", True)
     scaler = GradScaler() if use_amp else None
     
-    # Возобновление обучения
+
     start_epoch = 0
     best_val_loss = float("inf")
     
@@ -324,19 +305,19 @@ def main():
         if scheduler and "scheduler_state_dict" in checkpoint:
             scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
     
-    # Обучение
+
     logger.info("Начало обучения...")
     
     for epoch in range(start_epoch, config["training"]["num_epochs"]):
-        # Обучение
+
         train_loss = train_epoch(
             model, train_loader, optimizer, criterion, device, scaler, use_amp
         )
         
-        # Валидация
+
         val_loss = validate(model, val_loader, criterion, device)
         
-        # Scheduler step
+
         if scheduler:
             scheduler.step()
         
@@ -346,7 +327,7 @@ def main():
             f"LR: {optimizer.param_groups[0]['lr']:.6f}"
         )
         
-        # Сохранение лучшей модели
+
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             logger.info(f"Новая лучшая модель! Val Loss: {val_loss:.6f}")
@@ -365,7 +346,7 @@ def main():
                 checkpoint_path,
             )
         
-        # Сохранение каждые N эпох
+
         if (epoch + 1) % config["training"]["save_every"] == 0:
             checkpoint_path_epoch = checkpoint_path.parent / f"checkpoint_epoch_{epoch+1}.pt"
             torch.save(
@@ -385,7 +366,7 @@ def main():
     logger.info("Обучение завершено!")
     logger.info(f"Лучшая модель сохранена: {checkpoint_path}")
     
-    # Создание детектора аномалий
+
     logger.info("Создание детектора аномалий...")
     
     detector = AnomalyDetector(
@@ -394,13 +375,13 @@ def main():
         threshold_percentile=config["anomaly"]["threshold_percentile"],
     )
     
-    # Вычисление порога на validation данных
+
     val_tensor_for_detector = torch.FloatTensor(np.array(val_sequences)).to(device)
     threshold = detector.fit_threshold(val_tensor_for_detector)
     
     logger.info(f"Порог аномалии: {threshold:.6f}")
     
-    # Сохранение детектора
+
     detector_path = checkpoint_path.parent / "anomaly_detector_advanced.pt"
     detector.save(detector_path)
     

@@ -1,10 +1,7 @@
-"""
-Вспомогательные функции для анализа видео в Flask приложении.
-"""
 
-# Устанавливаем backend для matplotlib перед импортами
+
 import matplotlib
-matplotlib.use('Agg')  # Используем non-interactive backend
+matplotlib.use('Agg')
 
 import logging
 from pathlib import Path
@@ -28,7 +25,7 @@ import torch
 logger = logging.getLogger(__name__)
 
 
-# Глобальные переменные для моделей
+
 _model: Optional[BidirectionalLSTMAutoencoder] = None
 _detector: Optional[AnomalyDetector] = None
 _config: Optional[dict] = None
@@ -38,33 +35,27 @@ _pose_processor: Optional[PoseProcessor] = None
 
 def load_models_for_flask(config_path: str = "config.yaml", 
                           checkpoint_path: str = "checkpoints/best_model_advanced.pt") -> Tuple[bool, str]:
-    """
-    Загрузить модели для Flask приложения.
-    
-    Returns:
-        Tuple (успех, сообщение)
-    """
     global _model, _detector, _config, _video_processor, _pose_processor
     
     try:
         if _model is not None and _detector is not None:
             return True, "Модели уже загружены"
         
-        # Загружаем конфигурацию
+
         with open(config_path, "r", encoding="utf-8") as f:
             _config = yaml.safe_load(f)
         
-        # Проверяем GPU
+
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         if device.type != "cuda":
             return False, "GPU недоступен"
         
-        # Загружаем модель и детектор
+
         _model, _detector = load_model_and_detector(
             Path(checkpoint_path), _config, device, model_type="bidir_lstm"
         )
         
-        # Инициализация процессоров
+
         _video_processor = VideoProcessor(
             model_complexity=_config["pose"]["model_complexity"],
             min_detection_confidence=_config["pose"]["min_detection_confidence"],
@@ -96,18 +87,6 @@ def analyze_video_flask(
     gestational_age_weeks: int = 40,
     output_dir: Optional[Path] = None
 ) -> Tuple[bool, Optional[str], Optional[str], Optional[str], Optional[str], Optional[str]]:
-    """
-    Анализ видео для Flask приложения.
-    
-    Args:
-        video_path: Путь к видеофайлу
-        age_weeks: Возраст ребенка в неделях
-        gestational_age_weeks: Гестационный возраст
-        output_dir: Директория для сохранения результатов
-    
-    Returns:
-        Tuple (успех, plot_path, video_path, report_text, error_message, output_dir_path)
-    """
     global _model, _detector, _config, _video_processor, _pose_processor
     
     if _model is None or _detector is None:
@@ -117,20 +96,20 @@ def analyze_video_flask(
         return False, None, None, None, "Видео файл не найден"
     
     try:
-        # Создаем директорию для результатов
+
         if output_dir is None:
             output_dir = Path("results") / f"analysis_{video_path.stem}"
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Обрабатываем видео
+
         keypoints_list, errors, is_anomaly, sequences_array = process_video(
             video_path, _video_processor, _pose_processor, _detector, _config
         )
         
-        # Визуализация
+
         visualize_results(errors, is_anomaly, output_dir, video_path.stem, _detector.threshold)
         
-        # Создаем видео с наложенным скелетом
+
         skeleton_video_path = output_dir / "video_with_skeleton.mp4"
         try:
             if not keypoints_list or len(keypoints_list) == 0:
@@ -151,7 +130,7 @@ def analyze_video_flask(
             logger.error(f"Не удалось создать видео с скелетом: {e}", exc_info=True)
             skeleton_video_path = None
         
-        # Генерация медицинского отчета
+
         report = generate_medical_report(
             video_path, errors, is_anomaly, _detector, output_dir,
             age_weeks=age_weeks, 
@@ -159,31 +138,31 @@ def analyze_video_flask(
             sequences_array=sequences_array
         )
         
-        # Форматируем отчет
+
         from utils.report_formatter import format_medical_report
         report_text = format_medical_report(report)
         
-        # Пути к результатам
+
         plot_path = output_dir / "reconstruction_error.png"
         
-        # Возвращаем относительные пути от results/ для Flask
+
         results_base = Path("results").resolve()
         output_dir_resolved = output_dir.resolve()
         
         try:
-            # Получаем относительный путь от results/
+
             plot_relative = plot_path.resolve().relative_to(results_base)
             video_relative = skeleton_video_path.resolve().relative_to(results_base) if skeleton_video_path else None
         except ValueError:
-            # Если не удается получить относительный путь, используем имя файла
+
             plot_relative = plot_path.name
             video_relative = skeleton_video_path.name if skeleton_video_path else None
         
-        # Преобразуем в строку с правильными разделителями для URL
+
         plot_url_path = str(plot_relative).replace('\\', '/')
         video_url_path = str(video_relative).replace('\\', '/') if video_relative else None
         
-        # Возвращаем относительный путь к директории результатов для скачивания
+
         try:
             output_dir_relative = output_dir.resolve().relative_to(results_base)
             output_dir_path = str(output_dir_relative).replace('\\', '/')
@@ -198,7 +177,6 @@ def analyze_video_flask(
 
 
 def get_models_status() -> Dict[str, Any]:
-    """Получить статус моделей."""
     return {
         'loaded': _model is not None and _detector is not None,
         'model': _model is not None,

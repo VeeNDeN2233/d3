@@ -1,6 +1,3 @@
-"""
-Скрипт запуска Flask приложения.
-"""
 
 import os
 from app import app

@@ -1,6 +1,3 @@
-"""
-Скрипт для создания администратора системы.
-"""
 
 import sys
 import os
@@ -8,26 +5,25 @@ from pathlib import Path
 from auth.database import UserDatabase
 from auth.auth_manager import AuthManager
 
-# Устанавливаем UTF-8 для вывода
+
 if sys.platform == 'win32':
     os.system('chcp 65001 >nul 2>&1')
     sys.stdout.reconfigure(encoding='utf-8') if hasattr(sys.stdout, 'reconfigure') else None
 
 def create_admin():
-    """Создать администратора с email admin@admin.com."""
     
     db = UserDatabase()
     auth_manager = AuthManager()
     
     admin_email = "admin@admin.com"
     admin_username = "admin"
-    admin_password = "admin123"  # В продакшене использовать более сложный пароль
+    admin_password = "admin123"
     
     print(f"Создание администратора...")
     print(f"Email: {admin_email}")
     print(f"Username: {admin_username}")
     
-    # Проверяем, существует ли уже админ
+
     import sqlite3
     conn_obj = sqlite3.connect(str(db.db_path))
     cursor = conn_obj.cursor()
@@ -39,7 +35,7 @@ def create_admin():
         print("WARNING: Администратор уже существует!")
         print("Пересоздаем администратора...")
         
-        # Удаляем существующего админа
+
         admin_id = existing[0]
         cursor.execute("DELETE FROM sessions WHERE user_id = ?", (admin_id,))
         cursor.execute("DELETE FROM users WHERE id = ?", (admin_id,))
@@ -48,7 +44,7 @@ def create_admin():
     
     conn_obj.close()
     
-    # Создаем нового админа
+
     success, message = db.create_user(
         username=admin_username,
         password=admin_password,

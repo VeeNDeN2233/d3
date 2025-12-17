@@ -1,12 +1,8 @@
-"""
-Утилита для форматирования медицинских отчетов.
-"""
 
 from typing import Dict
 
 
 def format_medical_report(report: Dict) -> str:
-    """Форматировать медицинский отчет в формате GMA для отображения."""
     if not report:
         return "Ошибка: Отчет пуст"
     
@@ -16,7 +12,7 @@ def format_medical_report(report: Dict) -> str:
     lines.append("=" * 70)
     lines.append("")
     
-    # GMA оценка
+
     gma = report.get("gma_assessment", {})
     if gma:
         risk_level = gma.get("risk_level", "unknown").upper()
@@ -29,7 +25,7 @@ def format_medical_report(report: Dict) -> str:
         
         lines.append("")
     else:
-        # Fallback для старых отчетов
+
         anomaly = report.get("anomaly_detection", {})
         risk_level = anomaly.get("risk_level", "unknown").upper()
         risk_emoji = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢", "UNKNOWN": "⚪"}
@@ -37,7 +33,7 @@ def format_medical_report(report: Dict) -> str:
         lines.append(f"  {risk_emoji.get(risk_level, '⚪')} Риск двигательных нарушений: {risk_level}")
         lines.append("")
     
-    # Информация о пациенте
+
     patient_info = report.get("patient_info", {})
     if patient_info:
         lines.append("ДАННЫЕ ПАЦИЕНТА:")
@@ -51,7 +47,7 @@ def format_medical_report(report: Dict) -> str:
                 lines.append(f"  Скорректированный возраст: {patient_info['corrected_age']:.0f} недель")
         lines.append("")
     
-    # Статистика анализа
+
     stats = report.get("statistics", {})
     lines.append("СТАТИСТИКА АНАЛИЗА:")
     lines.append(f"  Проанализировано последовательностей: {stats.get('total_sequences', 'N/A')}")
@@ -59,7 +55,7 @@ def format_medical_report(report: Dict) -> str:
     lines.append(f"  Процент аномалий: {stats.get('anomaly_rate', 0):.1f}%")
     lines.append("")
     
-    # Ошибки реконструкции
+
     errors = report.get("reconstruction_errors", {})
     if errors:
         lines.append("ОШИБКИ РЕКОНСТРУКЦИИ:")
@@ -69,7 +65,7 @@ def format_medical_report(report: Dict) -> str:
         lines.append(f"  Стандартное отклонение: {errors.get('std', 0):.6f}")
         lines.append("")
     
-    # Обнаруженные признаки
+
     detected_signs = gma.get("detected_signs", [])
     if detected_signs:
         lines.append("ОБНАРУЖЕННЫЕ ПРИЗНАКИ:")
@@ -77,7 +73,7 @@ def format_medical_report(report: Dict) -> str:
             lines.append(f"  • {sign}")
         lines.append("")
     
-    # Рекомендации
+
     recommendations = report.get("recommendations", [])
     if recommendations:
         lines.append("РЕКОМЕНДАЦИИ:")
@@ -85,12 +81,12 @@ def format_medical_report(report: Dict) -> str:
             lines.append(f"  {rec}")
         lines.append("")
     
-    # Детальный анализ (если есть)
+
     detailed = report.get("detailed_analysis", {})
     if detailed:
         lines.append("ДЕТАЛЬНЫЙ АНАЛИЗ:")
         
-        # Асимметрия
+
         asymmetry = detailed.get("asymmetry", {})
         if asymmetry.get("has_asymmetry", False):
             lines.append("  Асимметрия движений: Обнаружена")
@@ -98,7 +94,7 @@ def format_medical_report(report: Dict) -> str:
             for finding in findings:
                 lines.append(f"    - {finding.get('description', 'N/A')}")
         
-        # Анализ суставов
+
         joint_analysis = detailed.get("joint_analysis", {})
         findings = joint_analysis.get("findings", [])
         if findings:
@@ -106,7 +102,7 @@ def format_medical_report(report: Dict) -> str:
             for finding in findings:
                 lines.append(f"    - {finding.get('description', 'N/A')}")
         
-        # Скорость движений
+
         speed_analysis = detailed.get("speed_analysis", {})
         findings = speed_analysis.get("findings", [])
         if findings:
@@ -114,7 +110,7 @@ def format_medical_report(report: Dict) -> str:
             for finding in findings:
                 lines.append(f"    - {finding.get('description', 'N/A')}")
         
-        # Амплитуда движений
+
         amplitude_analysis = detailed.get("amplitude_analysis", {})
         findings = amplitude_analysis.get("findings", [])
         if findings:
