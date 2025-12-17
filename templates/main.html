@@ -10,27 +10,63 @@
 <div class="analysis-container">
     <!-- Stepper - индикатор шагов -->
     <div class="stepper">
-        <div class="step active" id="step-1">
+        <div class="step active" id="step-0">
             <div class="step-circle">1</div>
+            <div class="step-label">Данные ребенка</div>
+        </div>
+        <div class="step" id="step-1">
+            <div class="step-circle">2</div>
             <div class="step-label">Загрузка видео</div>
         </div>
         <div class="step" id="step-2">
-            <div class="step-circle">2</div>
+            <div class="step-circle">3</div>
             <div class="step-label">Параметры</div>
         </div>
         <div class="step" id="step-3">
-            <div class="step-circle">3</div>
+            <div class="step-circle">4</div>
             <div class="step-label">Анализ</div>
         </div>
         <div class="step" id="step-4">
-            <div class="step-circle">4</div>
+            <div class="step-circle">5</div>
             <div class="step-label">Результаты</div>
         </div>
     </div>
     
+    <!-- Шаг 0: Данные ребенка -->
+    <div class="step-panel active" id="step0-panel">
+        <h2>Шаг 1: Данные ребенка</h2>
+        <p>Пожалуйста, заполните данные ребенка перед началом анализа.</p>
+        
+        <div class="form-row">
+            <div class="form-group">
+                <label for="patient_last_name">Фамилия ребенка *</label>
+                <input type="text" id="patient_last_name" name="patient_last_name" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="patient_first_name">Имя ребенка *</label>
+                <input type="text" id="patient_first_name" name="patient_first_name" required>
+            </div>
+        </div>
+        
+        <div class="form-row">
+            <div class="form-group">
+                <label for="patient_middle_name">Отчество ребенка</label>
+                <input type="text" id="patient_middle_name" name="patient_middle_name">
+            </div>
+            
+            <div class="form-group">
+                <label for="patient_birth_date">Дата рождения *</label>
+                <input type="date" id="patient_birth_date" name="patient_birth_date" required>
+            </div>
+        </div>
+        
+        <button class="btn-primary btn-large" id="next-to-step1">Далее</button>
+    </div>
+    
     <!-- Шаг 1: Загрузка видео -->
-    <div class="step-panel active" id="step1-panel">
-        <h2>Шаг 1: Загрузка видео</h2>
+    <div class="step-panel" id="step1-panel" style="display: none;">
+        <h2>Шаг 2: Загрузка видео</h2>
         <p>Загрузите видео младенца для анализа движений. Видео должно соответствовать требованиям съемки для GMA.</p>
         
         <div class="file-upload-area" id="upload-area">
@@ -51,12 +87,15 @@
             </ul>
         </div>
         
-        <button class="btn-primary btn-large" id="next-to-step2" disabled>Далее</button>
+        <div class="button-group">
+            <button class="btn-secondary" id="back-to-step0">Назад</button>
+            <button class="btn-primary btn-large" id="next-to-step2" disabled>Далее</button>
+        </div>
     </div>
     
     <!-- Шаг 2: Параметры -->
     <div class="step-panel" id="step2-panel" style="display: none;">
-        <h2>Шаг 2: Клинические параметры</h2>
+        <h2>Шаг 3: Клинические параметры</h2>
         <p>Укажите параметры для корректировки модели анализа. Эти данные используются для адаптации алгоритма под возраст ребенка.</p>
         
         <div class="form-row">
@@ -79,7 +118,7 @@
     
     <!-- Шаг 3: Анализ -->
     <div class="step-panel" id="step3-panel" style="display: none;">
-        <h2>Шаг 3: Запуск анализа</h2>
+        <h2>Шаг 4: Запуск анализа</h2>
         <p>После загрузки видео и указания параметров запустите анализ движений. Процесс может занять несколько минут.</p>
         
         <div id="analysis-progress" style="display: none;">
@@ -113,7 +152,7 @@
     
     <!-- Шаг 4: Результаты -->
     <div class="step-panel" id="step4-panel" style="display: none;">
-        <h2>Шаг 4: Результаты анализа</h2>
+        <h2>Шаг 5: Результаты анализа</h2>
         <p>Результаты анализа включают оценку риска, видео с наложенным скелетом и графики реконструкционной ошибки.</p>
         
         <div class="results-container">

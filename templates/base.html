@@ -17,6 +17,8 @@
                 <p>Система анализа движений младенцев</p>
             </div>
             <div class="header-right">
+                <a href="{{ url_for('main') }}" class="btn-nav">Анализ</a>
+                <a href="{{ url_for('history') }}" class="btn-nav">История</a>
                 <span class="user-email">{{ session.get('email', '') }}</span>
                 {% if session.get('role') == 'admin' %}
                 <a href="{{ url_for('admin_dashboard') }}" class="btn-admin">Админ-панель</a>

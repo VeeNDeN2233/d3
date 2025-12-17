@@ -1,8 +1,9 @@
 // JavaScript для страницы анализа
 
-let currentStep = 1;
+let currentStep = 0;
 let uploadedVideo = null;
 let analysisInProgress = false;
+let patientId = null;
 
 document.addEventListener('DOMContentLoaded', function() {
     initializeAnalysisPage();
@@ -23,6 +24,11 @@ function initializeAnalysisPage() {
 }
 
 function setupStepNavigation() {
+    // Переход от шага 0 к шагу 1 (данные ребенка -> загрузка видео)
+    document.getElementById('next-to-step1')?.addEventListener('click', function() {
+        savePatientData();
+    });
+    
     // Переход к шагу 2
     document.getElementById('next-to-step2')?.addEventListener('click', function() {
         goToStep(2);
@@ -31,6 +37,11 @@ function setupStepNavigation() {
     // Переход к шагу 3
     document.getElementById('next-to-step3')?.addEventListener('click', function() {
         goToStep(3);
+    });
+    
+    // Назад к шагу 0
+    document.getElementById('back-to-step0')?.addEventListener('click', function() {
+        goToStep(0);
     });
     
     // Назад к шагу 1
@@ -46,13 +57,52 @@ function setupStepNavigation() {
     // Новый анализ
     document.getElementById('new-analysis')?.addEventListener('click', function() {
         resetAnalysis();
-        goToStep(1);
+        goToStep(0);
+    });
+}
+
+function savePatientData() {
+    const lastName = document.getElementById('patient_last_name').value.trim();
+    const firstName = document.getElementById('patient_first_name').value.trim();
+    const middleName = document.getElementById('patient_middle_name').value.trim();
+    const birthDate = document.getElementById('patient_birth_date').value;
+    
+    if (!lastName || !firstName || !birthDate) {
+        alert('Пожалуйста, заполните все обязательные поля (Фамилия, Имя, Дата рождения)');
+        return;
+    }
+    
+    fetch('/api/create_patient', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: JSON.stringify({
+            last_name: lastName,
+            first_name: firstName,
+            middle_name: middleName || null,
+            birth_date: birthDate
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            patientId = data.patient_id;
+            goToStep(1);
+        } else {
+            alert('Ошибка сохранения данных ребенка: ' + data.message);
+        }
+    })
+    .catch(error => {
+        console.error('Ошибка сохранения данных ребенка:', error);
+        alert('Ошибка сохранения данных ребенка');
     });
 }
 
 function goToStep(step) {
     // Скрываем все панели
-    for (let i = 1; i <= 4; i++) {
+    for (let i = 0; i <= 4; i++) {
         const panel = document.getElementById(`step${i}-panel`);
         const stepEl = document.getElementById(`step-${i}`);
         
@@ -449,6 +499,7 @@ function startAnalysis() {
             'X-Requested-With': 'XMLHttpRequest'
         },
         body: JSON.stringify({
+            patient_id: patientId,
             age_weeks: ageWeeks,
             gestational_age: gestationalAge
         })
@@ -535,9 +586,10 @@ function cancelAnalysis() {
 }
 
 function resetAnalysis() {
-    currentStep = 1;
+    currentStep = 0;
     uploadedVideo = null;
     analysisInProgress = false;
+    patientId = null;
 
     // Скрываем кнопку скачивания
     const downloadBtn = document.getElementById('download-results');
@@ -545,7 +597,13 @@ function resetAnalysis() {
         downloadBtn.style.display = 'none';
     }
 
-    // Сбрасываем форму
+    // Сбрасываем форму данных ребенка
+    document.getElementById('patient_last_name').value = '';
+    document.getElementById('patient_first_name').value = '';
+    document.getElementById('patient_middle_name').value = '';
+    document.getElementById('patient_birth_date').value = '';
+
+    // Сбрасываем форму загрузки видео
     const fileInput = document.getElementById('video-input');
     const uploadArea = document.getElementById('upload-area');
     const nextBtn = document.getElementById('next-to-step2');

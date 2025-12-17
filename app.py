@@ -207,6 +207,39 @@ def logout():
     return redirect(url_for('login'))
 
 
+@app.route('/history')
+@require_auth()
+def history():
+    user_id = session.get('user_id')
+    results = auth_manager.db.get_user_analysis_results(user_id)
+    return render_template('history.html', results=results)
+
+
+@app.route('/result/<int:result_id>')
+@require_auth()
+def view_result(result_id):
+    user_id = session.get('user_id')
+    result = auth_manager.db.get_analysis_result_by_id(result_id, user_id)
+    
+    if not result:
+        flash('Результат анализа не найден', 'error')
+        return redirect(url_for('history'))
+    
+    return render_template('result_detail.html', result=result)
+
+
+@app.route('/api/delete_result/<int:result_id>', methods=['POST'])
+@require_auth()
+def api_delete_result(result_id):
+    user_id = session.get('user_id')
+    success, message = auth_manager.db.delete_analysis_result(result_id, user_id)
+    
+    if success:
+        return jsonify({'success': True, 'message': message})
+    else:
+        return jsonify({'success': False, 'message': message}), 400
+
+
 @app.route('/main')
 @require_auth()
 def main():
@@ -239,6 +272,38 @@ def api_load_models():
             'message': f'Ошибка загрузки моделей: {str(e)}',
             'models_loaded': False,
         }), 500
+
+
+@app.route('/api/create_patient', methods=['POST'])
+@require_auth()
+def api_create_patient():
+    data = request.json
+    last_name = data.get('last_name', '').strip()
+    first_name = data.get('first_name', '').strip()
+    middle_name = data.get('middle_name', '').strip() if data.get('middle_name') else None
+    birth_date = data.get('birth_date', '').strip()
+    
+    if not last_name or not first_name or not birth_date:
+        return jsonify({'success': False, 'message': 'Заполните все обязательные поля'}), 400
+    
+    user_id = session.get('user_id')
+    success, patient_id, message = auth_manager.db.create_patient(
+        user_id=user_id,
+        last_name=last_name,
+        first_name=first_name,
+        middle_name=middle_name,
+        birth_date=birth_date
+    )
+    
+    if success:
+        session['current_patient_id'] = patient_id
+        return jsonify({
+            'success': True,
+            'patient_id': patient_id,
+            'message': message
+        })
+    else:
+        return jsonify({'success': False, 'message': message}), 400
 
 
 @app.route('/api/upload_video', methods=['POST'])
@@ -283,8 +348,15 @@ def api_analyze():
     if not video_path.exists():
         return jsonify({'success': False, 'message': 'Файл видео не найден'}), 404
     
+    patient_id = request.json.get('patient_id')
     age_weeks = request.json.get('age_weeks', 12)
     gestational_age = request.json.get('gestational_age', 40)
+    
+    if not patient_id:
+        patient_id = session.get('current_patient_id')
+    
+    if not patient_id:
+        return jsonify({'success': False, 'message': 'Данные ребенка не заполнены'}), 400
     
     models_status = get_models_status()
     if not models_status['loaded']:
@@ -294,7 +366,9 @@ def api_analyze():
         }), 400
     
     try:
-
+        user_id = session.get('user_id')
+        video_filename = video_path.name
+        
         success, plot_path, video_path_result, report_text, error_msg, output_dir_path = analyze_video_flask(
             video_path=video_path,
             age_weeks=age_weeks,
@@ -307,12 +381,22 @@ def api_analyze():
                 'message': error_msg or 'Ошибка анализа',
             }), 500
         
-
-
+        is_anomaly = 'аномалия' in report_text.lower() or 'риск' in report_text.lower() if report_text else False
+        
+        auth_manager.db.create_analysis_result(
+            user_id=user_id,
+            patient_id=patient_id,
+            video_filename=video_filename,
+            output_dir=output_dir_path,
+            age_weeks=age_weeks,
+            gestational_age=gestational_age,
+            report_text=report_text,
+            is_anomaly=is_anomaly
+        )
+        
         plot_url = f"/results/{plot_path}" if plot_path else None
         video_url = f"/results/{video_path_result}" if video_path_result else None
         
-
         if output_dir_path:
             session['last_analysis_dir'] = output_dir_path
         
@@ -430,9 +514,39 @@ def admin_dashboard():
 @app.route('/admin/users')
 @require_admin()
 def admin_users():
+    search = request.args.get('search', '').strip()
+    role_filter = request.args.get('role', '')
+    status_filter = request.args.get('status', '')
+    
     users = auth_manager.db.get_all_users()
+    
+    if search:
+        users = [u for u in users if search.lower() in (u.get('username', '') or '').lower() 
+                 or search.lower() in (u.get('email', '') or '').lower()
+                 or search.lower() in (u.get('full_name', '') or '').lower()]
+    
+    if role_filter:
+        users = [u for u in users if u.get('role') == role_filter]
+    
+    if status_filter:
+        if status_filter == 'active':
+            users = [u for u in users if u.get('is_active')]
+        elif status_filter == 'inactive':
+            users = [u for u in users if not u.get('is_active')]
+    
+    total_users = len(auth_manager.db.get_all_users())
+    active_users = len([u for u in auth_manager.db.get_all_users() if u.get('is_active')])
+    admin_count = len([u for u in auth_manager.db.get_all_users() if u.get('role') == 'admin'])
+    
     admin_logger.info(f"Администратор {session.get('email')} просматривает список пользователей")
-    return render_template('admin/users.html', users=users)
+    return render_template('admin/users.html', 
+                         users=users, 
+                         search=search,
+                         role_filter=role_filter,
+                         status_filter=status_filter,
+                         total_users=total_users,
+                         active_users=active_users,
+                         admin_count=admin_count)
 
 
 @app.route('/admin/users/<int:user_id>/edit', methods=['GET', 'POST'])
@@ -472,6 +586,51 @@ def admin_edit_user(user_id):
     return render_template('admin/edit_user.html', user=user)
 
 
+@app.route('/admin/users/create', methods=['GET', 'POST'])
+@require_admin()
+def admin_create_user():
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        email = request.form.get('email', '').strip()
+        password = request.form.get('password', '').strip()
+        password_confirm = request.form.get('password_confirm', '').strip()
+        full_name = request.form.get('full_name', '').strip()
+        role = request.form.get('role', 'user')
+        is_active = request.form.get('is_active') == 'on'
+        
+        if not username or not password:
+            flash('Заполните имя пользователя и пароль', 'error')
+            return render_template('admin/create_user.html')
+        
+        if password != password_confirm:
+            flash('Пароли не совпадают', 'error')
+            return render_template('admin/create_user.html')
+        
+        success, message = auth_manager.db.create_user(
+            username=username,
+            password=password,
+            email=email if email else None,
+            full_name=full_name if full_name else None,
+            role=role
+        )
+        
+        if success:
+            if not is_active:
+                user = auth_manager.db.get_user_by_username(username)
+                if user:
+                    auth_manager.db.update_user(
+                        user_id=user['id'],
+                        is_active=False
+                    )
+            admin_logger.info(f"Администратор {session.get('email')} создал пользователя {username}")
+            flash('Пользователь успешно создан', 'success')
+            return redirect(url_for('admin_users'))
+        else:
+            flash(f'Ошибка: {message}', 'error')
+    
+    return render_template('admin/create_user.html')
+
+
 @app.route('/admin/users/<int:user_id>/delete', methods=['POST'])
 @require_admin()
 def admin_delete_user(user_id):
@@ -482,6 +641,46 @@ def admin_delete_user(user_id):
         flash('Пользователь успешно удален', 'success')
     else:
         flash(f'Ошибка: {message}', 'error')
+    
+    return redirect(url_for('admin_users'))
+
+
+@app.route('/admin/users/bulk_action', methods=['POST'])
+@require_admin()
+def admin_bulk_action():
+    action = request.form.get('action')
+    user_ids = request.form.getlist('user_ids')
+    
+    if not user_ids:
+        flash('Выберите хотя бы одного пользователя', 'error')
+        return redirect(url_for('admin_users'))
+    
+    user_ids = [int(uid) for uid in user_ids]
+    success_count = 0
+    
+    if action == 'activate':
+        for user_id in user_ids:
+            success, _ = auth_manager.db.update_user(user_id=user_id, is_active=True)
+            if success:
+                success_count += 1
+        admin_logger.info(f"Администратор {session.get('email')} активировал {success_count} пользователей")
+        flash(f'Активировано пользователей: {success_count}', 'success')
+    
+    elif action == 'deactivate':
+        for user_id in user_ids:
+            success, _ = auth_manager.db.update_user(user_id=user_id, is_active=False)
+            if success:
+                success_count += 1
+        admin_logger.info(f"Администратор {session.get('email')} деактивировал {success_count} пользователей")
+        flash(f'Деактивировано пользователей: {success_count}', 'success')
+    
+    elif action == 'delete':
+        for user_id in user_ids:
+            success, _ = auth_manager.db.delete_user(user_id)
+            if success:
+                success_count += 1
+        admin_logger.info(f"Администратор {session.get('email')} удалил {success_count} пользователей")
+        flash(f'Удалено пользователей: {success_count}', 'success')
     
     return redirect(url_for('admin_users'))
 

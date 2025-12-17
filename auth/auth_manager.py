@@ -26,15 +26,19 @@ class AuthManager:
         success, message = self.db.create_user(username, password, email, full_name)
         
         if success:
-
+            logger.info(f"Попытка аутентификации после регистрации для username: {username}, email: {email}")
             auth_success, user_data, auth_message = self.db.authenticate_user(username, password)
+            logger.info(f"Результат аутентификации: success={auth_success}, message={auth_message}")
             if auth_success:
                 session_token = self.db.create_session(user_data['id'])
                 self._active_sessions[session_token] = {
                     'user': user_data,
                     'created_at': datetime.now()
                 }
+                logger.info(f"Сессия создана для пользователя {user_data.get('username')}")
                 return True, message, session_token
+            else:
+                logger.error(f"Не удалось аутентифицировать пользователя после регистрации: {auth_message}")
         
         return False, message, None
     

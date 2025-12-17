@@ -4,6 +4,142 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<style>
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.stat-card {
+    background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+    border: 2px solid #e2e8f0;
+    border-radius: 16px;
+    padding: 20px;
+    text-align: center;
+}
+
+.stat-card h3 {
+    font-size: 32px;
+    font-weight: 700;
+    margin: 0 0 8px 0;
+    color: #1a202c;
+}
+
+.stat-card p {
+    color: #64748b;
+    font-size: 14px;
+    margin: 0;
+    font-weight: 600;
+}
+
+.filters-bar {
+    background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+    border: 2px solid #e2e8f0;
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 24px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: flex-end;
+}
+
+.filter-group {
+    flex: 1;
+    min-width: 200px;
+}
+
+.filter-group label {
+    display: block;
+    font-weight: 600;
+    font-size: 14px;
+    color: #475569;
+    margin-bottom: 8px;
+}
+
+.filter-group input,
+.filter-group select {
+    width: 100%;
+    padding: 10px 14px;
+    border: 2px solid #e2e8f0;
+    border-radius: 12px;
+    font-size: 14px;
+    transition: all 0.3s ease;
+}
+
+.filter-group input:focus,
+.filter-group select:focus {
+    border-color: #4a90e2;
+    outline: none;
+    box-shadow: 0 0 0 4px rgba(74, 144, 226, 0.1);
+}
+
+.bulk-actions {
+    background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+    border: 2px solid #e2e8f0;
+    border-radius: 16px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.bulk-actions select {
+    padding: 8px 12px;
+    border: 2px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 14px;
+}
+
+.bulk-actions button {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.bulk-actions button[type="submit"] {
+    background: linear-gradient(135deg, #4a90e2 0%, #357abd 100%);
+    color: white;
+}
+
+.bulk-actions button[type="submit"]:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(74, 144, 226, 0.3);
+}
+
+.admin-table th:first-child {
+    width: 50px;
+}
+
+.admin-table th:nth-child(2) {
+    width: 50px;
+}
+
+.admin-table input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: #64748b;
+}
+
+.empty-state p {
+    font-size: 16px;
+    margin-top: 12px;
+}
+</style>
 {% endblock %}
 
 {% block content %}
@@ -11,59 +147,147 @@
     <div class="admin-header">
         <div>
             <h1>Управление пользователями</h1>
+            <p>Всего: {{ total_users }} | Активных: {{ active_users }} | Администраторов: {{ admin_count }}</p>
         </div>
         <div class="header-actions">
-            <a href="{{ url_for('main') }}" class="btn-primary">На главную</a>
+            <a href="{{ url_for('admin_create_user') }}" class="btn-primary">+ Создать пользователя</a>
+            <a href="{{ url_for('main') }}" class="btn-secondary">На главную</a>
             <a href="{{ url_for('admin_dashboard') }}" class="btn-secondary">← Назад к панели</a>
         </div>
     </div>
     
-    <div class="admin-table-container">
-        <table class="admin-table">
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>Имя пользователя</th>
-                    <th>Email</th>
-                    <th>Полное имя</th>
-                    <th>Роль</th>
-                    <th>Статус</th>
-                    <th>Создан</th>
-                    <th>Последний вход</th>
-                    <th>Действия</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for user in users %}
-                <tr>
-                    <td>{{ user.id }}</td>
-                    <td>{{ user.username }}</td>
-                    <td>{{ user.email or '-' }}</td>
-                    <td>{{ user.full_name or '-' }}</td>
-                    <td>
-                        <span class="badge badge-{{ 'admin' if user.role == 'admin' else 'user' }}">
-                            {{ user.role }}
-                        </span>
-                    </td>
-                    <td>
-                        <span class="badge badge-{{ 'success' if user.is_active else 'danger' }}">
-                            {{ 'Активен' if user.is_active else 'Заблокирован' }}
-                        </span>
-                    </td>
-                    <td>{{ user.created_at or '-' }}</td>
-                    <td>{{ user.last_login or 'Никогда' }}</td>
-                    <td>
-                        <a href="{{ url_for('admin_edit_user', user_id=user.id) }}" class="btn-action btn-edit">✏️</a>
-                        <form method="POST" action="{{ url_for('admin_delete_user', user_id=user.id) }}" 
-                              style="display: inline;" 
-                              onsubmit="return confirm('Вы уверены, что хотите удалить пользователя {{ user.username }}?');">
-                            <button type="submit" class="btn-action btn-delete">🗑️</button>
-                        </form>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+    <div class="stats-grid">
+        <div class="stat-card">
+            <h3>{{ total_users }}</h3>
+            <p>Всего пользователей</p>
+        </div>
+        <div class="stat-card">
+            <h3>{{ active_users }}</h3>
+            <p>Активных</p>
+        </div>
+        <div class="stat-card">
+            <h3>{{ admin_count }}</h3>
+            <p>Администраторов</p>
+        </div>
+        <div class="stat-card">
+            <h3>{{ total_users - active_users }}</h3>
+            <p>Заблокированных</p>
+        </div>
     </div>
+    
+    <form method="GET" action="{{ url_for('admin_users') }}" class="filters-bar">
+        <div class="filter-group">
+            <label for="search">Поиск</label>
+            <input type="text" id="search" name="search" value="{{ search }}" placeholder="Имя, email, полное имя...">
+        </div>
+        <div class="filter-group">
+            <label for="role">Роль</label>
+            <select id="role" name="role">
+                <option value="">Все роли</option>
+                <option value="user" {{ 'selected' if role_filter == 'user' }}>Пользователь</option>
+                <option value="admin" {{ 'selected' if role_filter == 'admin' }}>Администратор</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label for="status">Статус</label>
+            <select id="status" name="status">
+                <option value="">Все</option>
+                <option value="active" {{ 'selected' if status_filter == 'active' }}>Активные</option>
+                <option value="inactive" {{ 'selected' if status_filter == 'inactive' }}>Заблокированные</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <button type="submit" class="btn-primary" style="margin-top: 0;">Применить</button>
+            <a href="{{ url_for('admin_users') }}" class="btn-secondary" style="margin-top: 8px; display: block; text-align: center;">Сбросить</a>
+        </div>
+    </form>
+    
+    {% if users %}
+    <form method="POST" action="{{ url_for('admin_bulk_action') }}" id="bulkForm">
+        <div class="bulk-actions">
+            <span style="font-weight: 600; color: #475569;">Массовые операции:</span>
+            <select name="action" required>
+                <option value="">Выберите действие</option>
+                <option value="activate">Активировать</option>
+                <option value="deactivate">Деактивировать</option>
+                <option value="delete">Удалить</option>
+            </select>
+            <button type="submit" onclick="return confirm('Вы уверены?')">Применить</button>
+        </div>
+        
+        <div class="admin-table-container">
+            <table class="admin-table">
+                <thead>
+                    <tr>
+                        <th><input type="checkbox" id="selectAll" onclick="toggleAll(this)"></th>
+                        <th>ID</th>
+                        <th>Имя пользователя</th>
+                        <th>Email</th>
+                        <th>Полное имя</th>
+                        <th>Роль</th>
+                        <th>Статус</th>
+                        <th>Создан</th>
+                        <th>Последний вход</th>
+                        <th>Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for user in users %}
+                    <tr>
+                        <td><input type="checkbox" name="user_ids" value="{{ user.id }}"></td>
+                        <td>{{ user.id }}</td>
+                        <td>{{ user.username }}</td>
+                        <td>{{ user.email or '-' }}</td>
+                        <td>{{ user.full_name or '-' }}</td>
+                        <td>
+                            <span class="badge badge-{{ 'admin' if user.role == 'admin' else 'user' }}">
+                                {{ user.role }}
+                            </span>
+                        </td>
+                        <td>
+                            <span class="badge badge-{{ 'success' if user.is_active else 'danger' }}">
+                                {{ 'Активен' if user.is_active else 'Заблокирован' }}
+                            </span>
+                        </td>
+                        <td>{{ user.created_at or '-' }}</td>
+                        <td>{{ user.last_login or 'Никогда' }}</td>
+                        <td>
+                            <a href="{{ url_for('admin_edit_user', user_id=user.id) }}" class="btn-action btn-edit" title="Редактировать">✏️</a>
+                            <form method="POST" action="{{ url_for('admin_delete_user', user_id=user.id) }}" 
+                                  style="display: inline;" 
+                                  onsubmit="return confirm('Вы уверены, что хотите удалить пользователя {{ user.username }}?');">
+                                <button type="submit" class="btn-action btn-delete" title="Удалить">🗑️</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </form>
+    {% else %}
+    <div class="admin-table-container">
+        <div class="empty-state">
+            <p>Пользователи не найдены</p>
+            <a href="{{ url_for('admin_users') }}" class="btn-secondary" style="margin-top: 16px; display: inline-block;">Сбросить фильтры</a>
+        </div>
+    </div>
+    {% endif %}
 </div>
+
+<script>
+function toggleAll(checkbox) {
+    const checkboxes = document.querySelectorAll('input[name="user_ids"]');
+    checkboxes.forEach(cb => cb.checked = checkbox.checked);
+}
+
+document.getElementById('bulkForm').addEventListener('submit', function(e) {
+    const checked = document.querySelectorAll('input[name="user_ids"]:checked');
+    if (checked.length === 0) {
+        e.preventDefault();
+        alert('Выберите хотя бы одного пользователя');
+        return false;
+    }
+});
+</script>
 {% endblock %}

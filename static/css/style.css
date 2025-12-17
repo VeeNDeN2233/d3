@@ -79,6 +79,26 @@ body {
     border-radius: 10px;
 }
 
+.btn-nav {
+    background: linear-gradient(135deg, #4299e1 0%, #3182ce 100%);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 10px 20px;
+    font-weight: 600;
+    font-size: 14px;
+    text-decoration: none;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 2px 8px rgba(66, 153, 225, 0.25);
+}
+
+.btn-nav:hover {
+    background: linear-gradient(135deg, #3182ce 0%, #2c5282 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(66, 153, 225, 0.35);
+}
+
 .btn-logout {
     background: linear-gradient(135deg, #e53e3e 0%, #c53030 100%);
     color: white;

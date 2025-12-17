@@ -1,0 +1,269 @@
+{% extends "base.html" %}
+
+{% block title %}История результатов - General Movements Assessment{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/analysis.css') }}">
+<style>
+.history-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 24px;
+}
+
+.history-header {
+    margin-bottom: 32px;
+}
+
+.history-header h1 {
+    font-size: 2rem;
+    margin-bottom: 8px;
+    color: #2c3e50;
+}
+
+.history-header p {
+    color: #7f8c8d;
+    font-size: 1rem;
+}
+
+.results-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.result-card {
+    background: white;
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.result-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.result-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.patient-info h3 {
+    margin: 0 0 8px 0;
+    font-size: 1.25rem;
+    color: #2c3e50;
+}
+
+.patient-info p {
+    margin: 4px 0;
+    color: #7f8c8d;
+    font-size: 0.9rem;
+}
+
+.result-meta {
+    text-align: right;
+}
+
+.result-date {
+    color: #7f8c8d;
+    font-size: 0.9rem;
+    margin-bottom: 8px;
+}
+
+.anomaly-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.anomaly-badge.detected {
+    background: #fee;
+    color: #c33;
+}
+
+.anomaly-badge.normal {
+    background: #efe;
+    color: #3c3;
+}
+
+.result-actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 16px;
+    flex-wrap: wrap;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 80px 24px;
+    background: white;
+    border-radius: 16px;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+    margin-top: 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}
+
+.empty-state h2 {
+    margin-bottom: 16px;
+    color: #2c3e50;
+    font-size: 1.75rem;
+    font-weight: 600;
+    text-align: center;
+    width: 100%;
+}
+
+.empty-state p {
+    color: #7f8c8d;
+    font-size: 1.1rem;
+    margin-bottom: 12px;
+    line-height: 1.6;
+    max-width: 600px;
+    text-align: center;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+
+.report-preview {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 16px;
+    margin-top: 16px;
+    max-height: 200px;
+    overflow-y: auto;
+    font-size: 0.9rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    color: #2c3e50;
+}
+
+.btn-delete {
+    background: linear-gradient(135deg, #e53e3e 0%, #c53030 100%);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 10px 20px;
+    font-weight: 600;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 8px rgba(229, 62, 62, 0.25);
+}
+
+.btn-delete:hover {
+    background: linear-gradient(135deg, #c53030 0%, #9b2c2c 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(229, 62, 62, 0.35);
+}
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function deleteResult(resultId) {
+    if (!confirm('Вы уверены, что хотите удалить этот результат анализа? Это действие нельзя отменить.')) {
+        return;
+    }
+    
+    fetch(`/api/delete_result/${resultId}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            alert('Ошибка удаления: ' + data.message);
+        }
+    })
+    .catch(error => {
+        console.error('Ошибка удаления:', error);
+        alert('Ошибка удаления результата');
+    });
+}
+</script>
+{% endblock %}
+
+{% block content %}
+<div class="history-container">
+    <div class="history-header">
+        <h1>История результатов анализа</h1>
+        <p>Все проведенные анализы движений младенцев</p>
+    </div>
+    
+    {% if results %}
+    <div class="results-list">
+        {% for result in results %}
+        <div class="result-card">
+            <div class="result-header">
+                <div class="patient-info">
+                    <h3>
+                        {{ result.patient_last_name }} {{ result.patient_first_name }}
+                        {% if result.patient_middle_name %}{{ result.patient_middle_name }}{% endif %}
+                    </h3>
+                    <p>Дата рождения: {{ result.patient_birth_date }}</p>
+                    {% if result.age_weeks %}
+                    <p>Возраст на момент анализа: {{ result.age_weeks }} недель</p>
+                    {% endif %}
+                    {% if result.gestational_age %}
+                    <p>Гестационный возраст: {{ result.gestational_age }} недель</p>
+                    {% endif %}
+                </div>
+                <div class="result-meta">
+                    <div class="result-date">{{ result.created_at }}</div>
+                    <span class="anomaly-badge {% if result.is_anomaly %}detected{% else %}normal{% endif %}">
+                        {% if result.is_anomaly %}Обнаружена аномалия{% else %}Норма{% endif %}
+                    </span>
+                </div>
+            </div>
+            
+            {% if result.report_text %}
+            <div class="report-preview">
+                {{ result.report_text[:500] }}{% if result.report_text|length > 500 %}...{% endif %}
+            </div>
+            {% endif %}
+            
+            <div class="result-actions">
+                <a href="{{ url_for('view_result', result_id=result.id) }}" class="btn-primary">
+                    Просмотреть детали
+                </a>
+                {% if result.output_dir %}
+                <a href="/api/download_results?dir={{ result.output_dir }}" class="btn-secondary">
+                    Скачать результаты
+                </a>
+                {% endif %}
+                <button class="btn-delete" onclick="deleteResult({{ result.id }})">
+                    Удалить
+                </button>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <div style="font-size: 64px; margin-bottom: 24px; opacity: 0.3; line-height: 1; text-align: center;">📊</div>
+        <h2 style="margin-bottom: 16px; line-height: 1.2; text-align: center;">История пуста</h2>
+        <div style="padding: 0 20px; text-align: center; max-width: 600px; margin: 0 auto;">
+            <p style="margin-bottom: 12px; line-height: 1.6; text-align: center;">Вы еще не проводили анализ движений младенцев.</p>
+            <p style="font-size: 0.95rem; color: #95a5a6; margin: 0; line-height: 1.6; text-align: center;">Начните с заполнения данных ребенка и загрузки видео для первого анализа.</p>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
