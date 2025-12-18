@@ -23,9 +23,6 @@ RUN ln -s /usr/bin/python3.11 /usr/bin/python
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Устанавливаем pip для Python 3.11
-RUN python3.11 -m ensurepip --upgrade
-
 # Копируем requirements.txt и устанавливаем зависимости
 COPY requirements.txt .
 RUN python3.11 -m pip install --no-cache-dir --upgrade pip
