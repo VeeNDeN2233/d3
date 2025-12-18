@@ -105,6 +105,8 @@ predictions/
 # Environment variables
 .env
 .env.local
+# But allow .env.example to be tracked
+!.env.example
 
 # Coverage reports
 htmlcov/
