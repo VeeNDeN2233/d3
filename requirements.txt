@@ -29,3 +29,7 @@ matplotlib>=3.7.0
 # Security
 bcrypt>=4.0.0
 
+# Beautiful terminal output
+rich>=13.0.0
+tqdm>=4.65.0
+
