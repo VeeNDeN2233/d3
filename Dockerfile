@@ -23,12 +23,16 @@ RUN ln -s /usr/bin/python3.11 /usr/bin/python
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
+# Устанавливаем pip для Python 3.11
+RUN python3.11 -m ensurepip --upgrade
+
 # Копируем requirements.txt и устанавливаем зависимости
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN python3.11 -m pip install --no-cache-dir --upgrade pip
+RUN python3.11 -m pip install --no-cache-dir -r requirements.txt
 
 # Устанавливаем PyTorch с CUDA поддержкой
-RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cu118
+RUN python3.11 -m pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cu118
 
 # Копируем весь проект
 COPY . .
@@ -46,4 +50,4 @@ ENV PORT=5000
 EXPOSE 5000
 
 # Команда запуска
-CMD ["python", "run_flask.py"]
+CMD ["python3.11", "run_flask.py"]
