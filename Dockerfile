@@ -2,7 +2,11 @@
 FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 # Устанавливаем Python 3.11
-RUN apt-get update && apt-get install -y \
+# Повторные попытки для обработки временных проблем с зеркалами Ubuntu
+RUN apt-get clean && \
+    rm -rf /var/lib/apt/lists/* && \
+    apt-get update --fix-missing || apt-get update --fix-missing || apt-get update && \
+    apt-get install -y --no-install-recommends \
     python3.11 \
     python3.11-dev \
     python3-pip \

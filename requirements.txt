@@ -13,7 +13,7 @@ imageio-ffmpeg>=0.4.9
 mediapipe>=0.10.14
 
 # Utilities
-numpy<2.0,>=1.24.0
+numpy>=2.0.0,<3.0.0
 pillow>=10.0.0
 
 # Deep Learning (GPU) - установите с CUDA из https://pytorch.org/
