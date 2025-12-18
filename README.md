@@ -207,11 +207,34 @@ python -c "import flask, cv2, mediapipe, numpy, yaml; print('Все зависи
 
 ## 🚀 Быстрый старт с Docker
 
-### Требования
+### Требования для Docker
 
-- Docker и Docker Compose
-- NVIDIA GPU с поддержкой CUDA 11.8+
-- NVIDIA Container Toolkit
+- **Docker Desktop** (Windows/macOS) или **Docker Engine + Docker Compose** (Linux)
+- **NVIDIA GPU** с поддержкой CUDA 11.8+
+- **NVIDIA Container Toolkit** (для доступа к GPU из контейнера)
+
+### Установка Docker
+
+**Windows:**
+1. Скачайте [Docker Desktop для Windows](https://www.docker.com/products/docker-desktop/)
+2. Установите Docker Desktop (WSL 2 установится автоматически)
+3. Запустите Docker Desktop и дождитесь полной загрузки
+
+**Linux (Ubuntu/Debian):**
+```bash
+# Установка Docker Engine
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+
+# Добавьте пользователя в группу docker
+sudo usermod -aG docker $USER
+
+# Выйдите и войдите снова, чтобы изменения вступили в силу
+```
+
+**macOS:**
+1. Скачайте [Docker Desktop для Mac](https://www.docker.com/products/docker-desktop/)
+2. Установите и запустите Docker Desktop
 
 ### Установка NVIDIA Container Toolkit
 
@@ -226,7 +249,11 @@ sudo systemctl restart docker
 ```
 
 **Windows:**
-Установите WSL2 и следуйте инструкциям для Ubuntu, или используйте Docker Desktop с поддержкой WSL2.
+- Docker Desktop автоматически использует GPU через WSL 2
+- Убедитесь, что установлены драйверы NVIDIA для Windows
+
+**macOS:**
+- macOS не поддерживает NVIDIA GPU в Docker (только Linux/Windows)
 
 ### Запуск приложения
 
@@ -264,6 +291,10 @@ cp .env.example .env
 
 4. **Запустите Docker Compose:**
 ```bash
+# В новых версиях Docker используется команда без дефиса:
+docker compose up --build
+
+# Если команда выше не работает, попробуйте старую версию:
 docker-compose up --build
 ```
 
@@ -277,11 +308,12 @@ http://localhost:5000
 После первого запуска создайте администратора:
 
 ```bash
+# В контейнере
+docker compose exec web python create_admin.py
+# или (старая версия)
 docker-compose exec web python create_admin.py
-```
 
-Или запустите локально (если Python установлен):
-```bash
+# Локально (если Python установлен)
 python create_admin.py
 ```
 
@@ -319,29 +351,42 @@ python create_admin.py
 
 ## 🐳 Docker команды
 
+**Примечание:** В новых версиях Docker используется `docker compose` (без дефиса). Если команда не работает, попробуйте `docker-compose` (с дефисом).
+
 ### Запуск в фоновом режиме:
 ```bash
-docker-compose up -d
+docker compose up -d
+# или: docker-compose up -d
 ```
 
 ### Просмотр логов:
 ```bash
-docker-compose logs -f
+docker compose logs -f
+# или: docker-compose logs -f
 ```
 
 ### Остановка:
 ```bash
-docker-compose down
+docker compose down
+# или: docker-compose down
 ```
 
 ### Пересборка образа:
 ```bash
-docker-compose build --no-cache
+docker compose build --no-cache
+# или: docker-compose build --no-cache
 ```
 
 ### Выполнение команд в контейнере:
 ```bash
-docker-compose exec web python create_admin.py
+docker compose exec web python create_admin.py
+# или: docker-compose exec web python create_admin.py
+```
+
+### Проверка статуса контейнеров:
+```bash
+docker compose ps
+# или: docker-compose ps
 ```
 
 ## 📁 Структура проекта
