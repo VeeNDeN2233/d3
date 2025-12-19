@@ -445,6 +445,8 @@ def serve_result(filename):
             mime_type = 'image/png'
         elif filename.endswith('.mp4'):
             mime_type = 'video/mp4'
+            # Используем conditional=True для поддержки Range запросов (streaming)
+            return send_file(file_path, mimetype=mime_type, conditional=True)
         elif filename.endswith('.jpg') or filename.endswith('.jpeg'):
             mime_type = 'image/jpeg'
         

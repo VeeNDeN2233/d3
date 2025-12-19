@@ -370,5 +370,38 @@ def create_skeleton_video_from_processed(
         raise RuntimeError(f"Видео файл пуст: {output_video_path}")
     
     logger.info(f"Видео с скелетом создано: {output_video_path} ({frame_idx} кадров, {file_size / 1024 / 1024:.2f} MB, кодек: {used_codec})")
+    
+    # Перекодируем в H.264 для лучшей совместимости с браузерами, если используется mp4v
+    if used_codec == "MPEG-4":
+        try:
+            import subprocess
+            h264_output = output_video_path.parent / f"{output_video_path.stem}_h264.mp4"
+            logger.info(f"Перекодирование в H.264 для лучшей совместимости браузеров...")
+            
+            # Используем ffmpeg для перекодирования в H.264
+            cmd = [
+                'ffmpeg', '-y', '-i', str(output_video_path),
+                '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+                '-movflags', '+faststart', '-pix_fmt', 'yuv420p',
+                str(h264_output)
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            
+            if result.returncode == 0 and h264_output.exists() and h264_output.stat().st_size > 0:
+                # Заменяем оригинальный файл перекодированным
+                output_video_path.unlink()
+                h264_output.rename(output_video_path)
+                new_size = output_video_path.stat().st_size
+                logger.info(f"Видео успешно перекодировано в H.264 ({new_size / 1024 / 1024:.2f} MB)")
+            else:
+                logger.warning(f"Не удалось перекодировать видео, используется оригинальный кодек: {result.stderr[:200] if result.stderr else 'unknown error'}")
+                if h264_output.exists():
+                    h264_output.unlink()
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Перекодирование видео заняло слишком много времени, используется оригинальный файл")
+        except Exception as e:
+            logger.warning(f"Ошибка при перекодировании видео в H.264: {e}. Используется оригинальный файл.")
+    
     return output_video_path
 
