@@ -1,12 +1,8 @@
-# Используем официальный образ Python с CUDA поддержкой
+# Используем официальный образ с CUDA поддержкой
 FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
-# Устанавливаем Python 3.11
-# Повторные попытки для обработки временных проблем с зеркалами Ubuntu
-RUN apt-get clean && \
-    rm -rf /var/lib/apt/lists/* && \
-    apt-get update --fix-missing || apt-get update --fix-missing || apt-get update && \
-    apt-get install -y --no-install-recommends \
+# Устанавливаем Python 3.11 и системные зависимости (объединено для оптимизации слоев)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.11 \
     python3.11-dev \
     python3-pip \
@@ -15,21 +11,18 @@ RUN apt-get clean && \
     libxext6 \
     libxrender-dev \
     libgomp1 \
+    && ln -s /usr/bin/python3.11 /usr/bin/python \
     && rm -rf /var/lib/apt/lists/*
-
-# Создаем символическую ссылку для python
-RUN ln -s /usr/bin/python3.11 /usr/bin/python
 
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Копируем requirements.txt и устанавливаем зависимости
+# Копируем requirements.txt и устанавливаем зависимости (объединено для оптимизации)
 COPY requirements.txt .
-RUN python3.11 -m pip install --no-cache-dir --upgrade pip
-RUN python3.11 -m pip install --no-cache-dir -r requirements.txt
-
-# Устанавливаем PyTorch с CUDA поддержкой
-RUN python3.11 -m pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cu118
+RUN python -m pip install --no-cache-dir --upgrade pip && \
+    python -m pip install --no-cache-dir -r requirements.txt && \
+    python -m pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu118 \
+    torch==2.7.1+cu118 torchvision==0.22.1+cu118
 
 # Копируем весь проект
 COPY . .
@@ -47,4 +40,4 @@ ENV PORT=5000
 EXPOSE 5000
 
 # Команда запуска
-CMD ["python3.11", "run_flask.py"]
+CMD ["python", "run_flask.py"]

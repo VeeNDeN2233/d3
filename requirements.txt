@@ -16,10 +16,6 @@ mediapipe>=0.10.14
 numpy>=2.0.0,<3.0.0
 pillow>=10.0.0
 
-# Deep Learning (GPU) - установите с CUDA из https://pytorch.org/
-torch>=2.0.0
-torchvision>=0.15.0
-
 # Configuration
 pyyaml>=6.0.0
 
