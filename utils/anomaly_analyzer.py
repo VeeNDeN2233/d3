@@ -360,62 +360,100 @@ def analyze_specific_joints(
 
     amplitude_z_scores = (normal_amplitude - anomalous_amplitude) / (normal_amplitude_std + 1e-6)
 
-    low_amplitude_joints = np.where(amplitude_z_scores > 2.0)[0]
+    # Снижаем порог для более чувствительного обнаружения: 1.5 вместо 2.0
+    # Также добавляем суставы с умеренными отклонениями (1.0-1.5)
+    low_amplitude_joints_high = np.where(amplitude_z_scores > 2.0)[0]
+    low_amplitude_joints_moderate = np.where((amplitude_z_scores > 1.5) & (amplitude_z_scores <= 2.0))[0]
+    low_amplitude_joints_mild = np.where((amplitude_z_scores > 1.0) & (amplitude_z_scores <= 1.5))[0]
     
-    for joint_idx in low_amplitude_joints:
+    # Обрабатываем все уровни отклонений
+    for joint_idx in list(low_amplitude_joints_high) + list(low_amplitude_joints_moderate) + list(low_amplitude_joints_mild):
         if joint_idx < len(JOINT_NAMES):
             joint_name = JOINT_NAMES[joint_idx]
 
             if joint_name not in ["global", "spine", "spine1", "spine2", "neck", "head", "noseVertex"]:
                 z_score = amplitude_z_scores[joint_idx]
-                severity = "high" if z_score > 3.0 else "medium"
+                
+                # Определяем severity на основе z_score
+                if z_score > 3.0:
+                    severity = "high"
+                elif z_score > 2.0:
+                    severity = "medium"
+                elif z_score > 1.5:
+                    severity = "medium"
+                else:
+                    severity = "low"
+                
                 reduction_pct = (1 - anomalous_amplitude[joint_idx] / (normal_amplitude[joint_idx] + 1e-6)) * 100
                 
-                findings.append({
-                    "type": "reduced_movement",
-                    "joint": joint_name,
-                    "description": f"Сниженная амплитуда движений {joint_name}",
-                    "severity": severity,
-                    "confidence": calculate_confidence(z_score, 2.0),
-                    "data": {
-                        "anomalous_amplitude": float(anomalous_amplitude[joint_idx]),
-                        "normal_amplitude": float(normal_amplitude[joint_idx]),
-                        "reduction_percent": float(reduction_pct),
-                        "z_score": float(z_score),
-                        "deviation_sigma": float(z_score),
-                    }
-                })
+                # Добавляем только если отклонение значительное (>= 1.0)
+                if z_score >= 1.0:
+                    findings.append({
+                        "type": "reduced_movement",
+                        "joint": joint_name,
+                        "description": f"Сниженная амплитуда движений {joint_name}",
+                        "severity": severity,
+                        "confidence": calculate_confidence(z_score, 1.5),
+                        "data": {
+                            "anomalous_amplitude": float(anomalous_amplitude[joint_idx]),
+                            "normal_amplitude": float(normal_amplitude[joint_idx]),
+                            "reduction_percent": float(reduction_pct),
+                            "z_score": float(z_score),
+                            "deviation_sigma": float(z_score),
+                        }
+                    })
     
 
     velocity_z_scores = (anomalous_velocity - normal_velocity) / (normal_velocity_std + 1e-6)
-    high_velocity_joints = np.where(velocity_z_scores > 2.0)[0]
+    # Снижаем порог для более чувствительного обнаружения
+    high_velocity_joints_high = np.where(velocity_z_scores > 2.0)[0]
+    high_velocity_joints_moderate = np.where((velocity_z_scores > 1.5) & (velocity_z_scores <= 2.0))[0]
+    high_velocity_joints_mild = np.where((velocity_z_scores > 1.0) & (velocity_z_scores <= 1.5))[0]
     
-    for joint_idx in high_velocity_joints:
+    for joint_idx in list(high_velocity_joints_high) + list(high_velocity_joints_moderate) + list(high_velocity_joints_mild):
         if joint_idx < len(JOINT_NAMES):
             joint_name = JOINT_NAMES[joint_idx]
             if joint_name not in ["global", "spine", "spine1", "spine2", "neck", "head", "noseVertex"]:
                 z_score = velocity_z_scores[joint_idx]
-                severity = "high" if z_score > 3.0 else "medium"
+                
+                # Определяем severity на основе z_score
+                if z_score > 3.0:
+                    severity = "high"
+                elif z_score > 2.0:
+                    severity = "medium"
+                elif z_score > 1.5:
+                    severity = "medium"
+                else:
+                    severity = "low"
+                
                 speed_ratio = anomalous_velocity[joint_idx] / (normal_velocity[joint_idx] + 1e-6)
                 
-                findings.append({
-                    "type": "high_speed",
-                    "joint": joint_name,
-                    "description": f"Повышенная скорость движений {joint_name}",
-                    "severity": severity,
-                    "confidence": calculate_confidence(z_score, 2.0),
-                    "data": {
-                        "anomalous_velocity": float(anomalous_velocity[joint_idx]),
-                        "normal_velocity": float(normal_velocity[joint_idx]),
-                        "ratio": float(speed_ratio),
-                        "z_score": float(z_score),
-                        "deviation_sigma": float(z_score),
-                    }
-                })
+                # Добавляем только если отклонение значительное (>= 1.0)
+                if z_score >= 1.0:
+                    findings.append({
+                        "type": "high_speed",
+                        "joint": joint_name,
+                        "description": f"Повышенная скорость движений {joint_name}",
+                        "severity": severity,
+                        "confidence": calculate_confidence(z_score, 1.5),
+                        "data": {
+                            "anomalous_velocity": float(anomalous_velocity[joint_idx]),
+                            "normal_velocity": float(normal_velocity[joint_idx]),
+                            "ratio": float(speed_ratio),
+                            "z_score": float(z_score),
+                            "deviation_sigma": float(z_score),
+                        }
+                    })
+    
+    # Собираем все затронутые суставы (включая умеренные и легкие отклонения)
+    all_affected_joints = set()
+    for finding in findings:
+        if "joint" in finding:
+            all_affected_joints.add(finding["joint"])
     
     return {
         "findings": findings,
-        "affected_joints": [JOINT_NAMES[i] for i in low_amplitude_joints if i < len(JOINT_NAMES)]
+        "affected_joints": list(all_affected_joints)
     }
 
 

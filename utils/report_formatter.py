@@ -138,42 +138,46 @@ def format_medical_report(report: Dict) -> str:
 
         joint_analysis = detailed.get("joint_analysis", {})
         findings = joint_analysis.get("findings", [])
-        if findings:
+        affected_joints = joint_analysis.get("affected_joints", [])
+        
+        # Показываем анализ суставов, даже если findings пустой, но есть затронутые суставы
+        if findings or affected_joints:
             lines.append("  АНАЛИЗ СУСТАВОВ И КОНЕЧНОСТЕЙ:")
             
-            # Группируем по типу нарушения
-            reduced_movements = [f for f in findings if f.get('type') == 'reduced_movement']
-            high_speed = [f for f in findings if f.get('type') == 'high_speed']
-            
-            if reduced_movements:
-                lines.append("    Сниженная амплитуда движений:")
-                for finding in reduced_movements:
-                    joint_en = finding.get('joint', 'N/A')
-                    joint = translate_joint_name(joint_en)
-                    severity = finding.get('severity', 'unknown')
-                    confidence = finding.get('confidence', 'unknown')
-                    data = finding.get('data', {})
-                    reduction = data.get('reduction_percent', 0)
-                    z_score = data.get('z_score', 0)
-                    
-                    severity_emoji = "🔴" if severity == "high" else "🟡"
-                    severity_text = "высокая" if severity == "high" else "средняя"
-                    lines.append(f"      {severity_emoji} {joint}: снижение амплитуды на {reduction:.1f}% (степень: {severity_text}, z-score: {z_score:.2f}, уверенность: {confidence})")
-            
-            if high_speed:
-                lines.append("    Повышенная скорость движений:")
-                for finding in high_speed:
-                    joint_en = finding.get('joint', 'N/A')
-                    joint = translate_joint_name(joint_en)
-                    severity = finding.get('severity', 'unknown')
-                    confidence = finding.get('confidence', 'unknown')
-                    data = finding.get('data', {})
-                    ratio = data.get('ratio', 1.0)
-                    z_score = data.get('z_score', 0)
-                    
-                    severity_emoji = "🔴" if severity == "high" else "🟡"
-                    severity_text = "высокая" if severity == "high" else "средняя"
-                    lines.append(f"      {severity_emoji} {joint}: увеличение скорости в {ratio:.2f}x (степень: {severity_text}, z-score: {z_score:.2f}, уверенность: {confidence})")
+            if findings:
+                # Группируем по типу нарушения
+                reduced_movements = [f for f in findings if f.get('type') == 'reduced_movement']
+                high_speed = [f for f in findings if f.get('type') == 'high_speed']
+                
+                if reduced_movements:
+                    lines.append("    Сниженная амплитуда движений:")
+                    for finding in reduced_movements:
+                        joint_en = finding.get('joint', 'N/A')
+                        joint = translate_joint_name(joint_en)
+                        severity = finding.get('severity', 'unknown')
+                        confidence = finding.get('confidence', 'unknown')
+                        data = finding.get('data', {})
+                        reduction = data.get('reduction_percent', 0)
+                        z_score = data.get('z_score', 0)
+                        
+                        severity_emoji = "🔴" if severity == "high" else ("🟡" if severity == "medium" else "⚪")
+                        severity_text = "высокая" if severity == "high" else ("средняя" if severity == "medium" else "низкая")
+                        lines.append(f"      {severity_emoji} {joint}: снижение амплитуды на {reduction:.1f}% (степень: {severity_text}, z-score: {z_score:.2f}, уверенность: {confidence})")
+                
+                if high_speed:
+                    lines.append("    Повышенная скорость движений:")
+                    for finding in high_speed:
+                        joint_en = finding.get('joint', 'N/A')
+                        joint = translate_joint_name(joint_en)
+                        severity = finding.get('severity', 'unknown')
+                        confidence = finding.get('confidence', 'unknown')
+                        data = finding.get('data', {})
+                        ratio = data.get('ratio', 1.0)
+                        z_score = data.get('z_score', 0)
+                        
+                        severity_emoji = "🔴" if severity == "high" else ("🟡" if severity == "medium" else "⚪")
+                        severity_text = "высокая" if severity == "high" else ("средняя" if severity == "medium" else "низкая")
+                        lines.append(f"      {severity_emoji} {joint}: увеличение скорости в {ratio:.2f}x (степень: {severity_text}, z-score: {z_score:.2f}, уверенность: {confidence})")
             
             # Показываем все затронутые суставы
             affected_joints_en = joint_analysis.get("affected_joints", [])
