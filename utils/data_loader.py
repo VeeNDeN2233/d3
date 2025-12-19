@@ -14,10 +14,16 @@ logger = logging.getLogger(__name__)
 try:
     # Старый API (до 0.10.x)
     mp_pose = mp.solutions.pose
+    HAS_SOLUTIONS = True
 except AttributeError:
     # Новый API (0.10.x+) - используем обратную совместимость
-    from mediapipe import solutions
-    mp_pose = solutions.pose
+    try:
+        from mediapipe import solutions
+        mp_pose = solutions.pose
+        HAS_SOLUTIONS = True
+    except ImportError:
+        HAS_SOLUTIONS = False
+        mp_pose = None
 
 
 class MiniRGBDDataLoader:

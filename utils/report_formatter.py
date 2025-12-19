@@ -1,6 +1,37 @@
 
 from typing import Dict
 
+# Словарь для перевода названий суставов на русский
+JOINT_NAMES_RU = {
+    "leftThigh": "левое бедро",
+    "rightThigh": "правое бедро",
+    "leftCalf": "левая голень",
+    "rightCalf": "правая голень",
+    "leftFoot": "левая стопа",
+    "rightFoot": "правая стопа",
+    "leftToes": "левые пальцы ног",
+    "rightToes": "правые пальцы ног",
+    "leftShoulder": "левое плечо",
+    "rightShoulder": "правое плечо",
+    "leftUpperArm": "левое плечо",
+    "rightUpperArm": "правое плечо",
+    "leftForeArm": "левое предплечье",
+    "rightForeArm": "правое предплечье",
+    "leftHand": "левая кисть",
+    "rightHand": "правая кисть",
+    "leftFingers": "левые пальцы рук",
+    "rightFingers": "правые пальцы рук",
+    "neck": "шея",
+    "head": "голова",
+    "spine": "позвоночник",
+    "spine1": "позвоночник",
+    "spine2": "позвоночник",
+}
+
+def translate_joint_name(joint_name: str) -> str:
+    """Переводит название сустава на русский"""
+    return JOINT_NAMES_RU.get(joint_name, joint_name)
+
 
 def format_medical_report(report: Dict) -> str:
     if not report:
@@ -84,23 +115,76 @@ def format_medical_report(report: Dict) -> str:
 
     detailed = report.get("detailed_analysis", {})
     if detailed:
-        lines.append("ДЕТАЛЬНЫЙ АНАЛИЗ:")
+        lines.append("=" * 70)
+        lines.append("ДЕТАЛЬНЫЙ АНАЛИЗ ДВИЖЕНИЙ")
+        lines.append("=" * 70)
+        lines.append("")
         
 
         asymmetry = detailed.get("asymmetry", {})
         if asymmetry.get("has_asymmetry", False):
-            lines.append("  Асимметрия движений: Обнаружена")
+            lines.append("АСИММЕТРИЯ ДВИЖЕНИЙ:")
+            lines.append("  ⚠️ Обнаружена асимметрия между левой и правой сторонами тела")
             findings = asymmetry.get("findings", [])
             for finding in findings:
-                lines.append(f"    - {finding.get('description', 'N/A')}")
+                desc = finding.get('description', 'N/A')
+                confidence = finding.get('confidence', '')
+                if confidence:
+                    lines.append(f"    - {desc} (уверенность: {confidence})")
+                else:
+                    lines.append(f"    - {desc}")
+            lines.append("")
         
 
         joint_analysis = detailed.get("joint_analysis", {})
         findings = joint_analysis.get("findings", [])
         if findings:
-            lines.append("  Анализ суставов:")
-            for finding in findings:
-                lines.append(f"    - {finding.get('description', 'N/A')}")
+            lines.append("  АНАЛИЗ СУСТАВОВ И КОНЕЧНОСТЕЙ:")
+            
+            # Группируем по типу нарушения
+            reduced_movements = [f for f in findings if f.get('type') == 'reduced_movement']
+            high_speed = [f for f in findings if f.get('type') == 'high_speed']
+            
+            if reduced_movements:
+                lines.append("    Сниженная амплитуда движений:")
+                for finding in reduced_movements:
+                    joint_en = finding.get('joint', 'N/A')
+                    joint = translate_joint_name(joint_en)
+                    severity = finding.get('severity', 'unknown')
+                    confidence = finding.get('confidence', 'unknown')
+                    data = finding.get('data', {})
+                    reduction = data.get('reduction_percent', 0)
+                    z_score = data.get('z_score', 0)
+                    
+                    severity_emoji = "🔴" if severity == "high" else "🟡"
+                    severity_text = "высокая" if severity == "high" else "средняя"
+                    lines.append(f"      {severity_emoji} {joint}: снижение амплитуды на {reduction:.1f}% (степень: {severity_text}, z-score: {z_score:.2f}, уверенность: {confidence})")
+            
+            if high_speed:
+                lines.append("    Повышенная скорость движений:")
+                for finding in high_speed:
+                    joint_en = finding.get('joint', 'N/A')
+                    joint = translate_joint_name(joint_en)
+                    severity = finding.get('severity', 'unknown')
+                    confidence = finding.get('confidence', 'unknown')
+                    data = finding.get('data', {})
+                    ratio = data.get('ratio', 1.0)
+                    z_score = data.get('z_score', 0)
+                    
+                    severity_emoji = "🔴" if severity == "high" else "🟡"
+                    severity_text = "высокая" if severity == "high" else "средняя"
+                    lines.append(f"      {severity_emoji} {joint}: увеличение скорости в {ratio:.2f}x (степень: {severity_text}, z-score: {z_score:.2f}, уверенность: {confidence})")
+            
+            # Показываем все затронутые суставы
+            affected_joints_en = joint_analysis.get("affected_joints", [])
+            if affected_joints_en:
+                affected_joints_ru = [translate_joint_name(j) for j in affected_joints_en]
+                lines.append(f"    Всего затронутых суставов: {len(affected_joints_ru)}")
+                lines.append(f"    Список: {', '.join(affected_joints_ru)}")
+        else:
+            # Если нет конкретных findings, но есть аномалии, показываем общую информацию
+            if detailed.get("has_anomalies", False):
+                lines.append("  АНАЛИЗ СУСТАВОВ: Обнаружены нарушения движений, требуют детального рассмотрения")
         
 
         speed_analysis = detailed.get("speed_analysis", {})

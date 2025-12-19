@@ -225,19 +225,28 @@ def generate_report(
     
     errors_array = np.array(errors)
     anomaly_rate = np.mean(is_anomaly) * 100
+    anomalous_count = sum(is_anomaly)
+    total_count = len(is_anomaly)
     
 
     mean_error = float(errors_array.mean())
+    max_error = float(errors_array.max())
     
 
-    if mean_error > detector.threshold * 1.5:
+    # Определяем риск на основе процента аномалий И максимальной ошибки
+    # Если процент аномалий высокий (>30%) или есть очень большие пики (>threshold*2)
+    if anomaly_rate > 30.0 or max_error > detector.threshold * 2.0:
         risk_level = "high"
         gma_assessment = "АНОМАЛЬНЫЕ общие движения"
         cp_risk = "ВЫСОКИЙ риск церебрального паралича"
-    elif mean_error > detector.threshold:
+    elif anomaly_rate > 15.0 or max_error > detector.threshold * 1.5 or mean_error > detector.threshold:
         risk_level = "medium"
         gma_assessment = "ПОДОЗРИТЕЛЬНЫЕ общие движения"
         cp_risk = "УМЕРЕННЫЙ риск неврологических нарушений"
+    elif anomaly_rate > 5.0 or mean_error > detector.threshold * 0.8:
+        risk_level = "medium"
+        gma_assessment = "ПОДОЗРИТЕЛЬНЫЕ общие движения (легкие отклонения)"
+        cp_risk = "НИЗКИЙ-УМЕРЕННЫЙ риск"
     else:
         risk_level = "low"
         gma_assessment = "НОРМАЛЬНЫЕ общие движения"
@@ -255,9 +264,13 @@ def generate_report(
             sequences_np = np.array(sequences_array)
             errors_np = np.array(errors)
             
+            logger.info(f"Запуск детального анализа: {len(sequences_np)} последовательностей, {sum(is_anomaly)} аномальных")
 
             normal_statistics = get_normal_statistics()
-            
+            if normal_statistics:
+                logger.info("Используются нормальные статистики из тренировочных данных")
+            else:
+                logger.warning("Нормальные статистики не найдены, будут использоваться статистики из текущего видео")
 
 
             detailed_analysis = analyze_joint_errors(
@@ -268,6 +281,10 @@ def generate_report(
                 age_weeks=age_weeks,
                 analyze_all_sequences=True
             )
+            
+            logger.info(f"Детальный анализ завершен: has_anomalies={detailed_analysis.get('has_anomalies', False)}, "
+                       f"joint_findings={len(detailed_analysis.get('joint_analysis', {}).get('findings', []))}, "
+                       f"asymmetry={detailed_analysis.get('asymmetry', {}).get('has_asymmetry', False)}")
             
 
             amplitude_analysis = detailed_analysis.get("amplitude_analysis", {})
@@ -319,13 +336,25 @@ def generate_report(
             detected_signs.append(finding["description"])
     
 
-    if len(detected_signs) == 0:
+    # Даже если детальный анализ не выполнился, добавляем информацию об аномалиях
+    if len(detected_signs) == 0 and anomalous_count > 0:
         if anomaly_rate > 30:
-            detected_signs.append("высокая частота аномальных паттернов")
+            detected_signs.append(f"Высокая частота аномальных паттернов движений ({anomaly_rate:.1f}% последовательностей)")
+        elif anomaly_rate > 15:
+            detected_signs.append(f"Повышенная частота аномальных паттернов движений ({anomaly_rate:.1f}% последовательностей)")
+        elif anomaly_rate > 5:
+            detected_signs.append(f"Умеренная частота аномальных паттернов движений ({anomaly_rate:.1f}% последовательностей)")
+        
+        if max_error > detector.threshold * 2.0:
+            detected_signs.append(f"Критические отклонения в отдельных последовательностях (макс. ошибка: {max_error:.4f})")
+        elif max_error > detector.threshold * 1.5:
+            detected_signs.append(f"Значительные отклонения в отдельных последовательностях (макс. ошибка: {max_error:.4f})")
+        
         if mean_error > detector.threshold * 1.2:
-            detected_signs.append("сниженная вариабельность движений")
+            detected_signs.append("Сниженная вариабельность движений")
+        
         if len(detected_signs) == 0 and risk_level != "low":
-            detected_signs.append("отклонения от нормальных паттернов")
+            detected_signs.append(f"Обнаружены отклонения от нормальных паттернов движений ({anomalous_count} из {total_count} последовательностей)")
     
 
     recommendations = []
