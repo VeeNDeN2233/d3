@@ -1,6 +1,9 @@
 services:
   web:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # BuildKit включен автоматически в Docker Desktop
     ports:
       - "5000:5000"
     volumes:
@@ -9,6 +12,8 @@ services:
       - ./uploads:/app/uploads
       - ./logs:/app/logs
       - ./auth:/app/auth
+      - ./config.yaml:/app/config.yaml
+      - ../MINI-RGBD_web:/app/data/MINI-RGBD_web
     environment:
       - FLASK_ENV=production
       - PORT=5000

@@ -50,10 +50,29 @@ checkpoints/*
 .DS_Store
 Thumbs.db
 
-# Documentation (уже удалена)
+# Documentation (не нужна в контейнере)
 docs/
+*.md
+!README.md
 
-# Старые файлы (уже удалены)
+# Старые файлы
 *.bat
 *.sh
 *.ps1
+
+# Docker файлы
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Временные файлы и кэши
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Дополнительные файлы проекта
+.env.example
+*.example

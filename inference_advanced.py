@@ -56,21 +56,40 @@ def load_model_and_detector(
     checkpoint_path: Path, config: dict, device: torch.device, model_type: str = "bidir_lstm"
 ) -> Tuple[nn.Module, AnomalyDetector]:
 
+    # Загружаем checkpoint для получения сохраненной конфигурации
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    saved_config = checkpoint.get("config", {})
+    
+    # Используем параметры из сохраненного config, если он есть, иначе из текущего config
+    if saved_config and "model" in saved_config:
+        model_config = saved_config["model"]
+        logger.info(f"Используется конфигурация из checkpoint")
+    else:
+        model_config = config.get("model", {})
+        logger.info(f"Используется текущая конфигурация")
+    
     if model_type == "bidir_lstm":
+        # Берем значения напрямую из model_config без fallback на config
+        encoder_sizes = model_config["encoder_hidden_sizes"] if "encoder_hidden_sizes" in model_config else [128, 64, 32]
+        decoder_sizes = model_config["decoder_hidden_sizes"] if "decoder_hidden_sizes" in model_config else [64, 128, 75]
+        latent_size_val = model_config["latent_size"] if "latent_size" in model_config else 32
+        input_size_val = model_config["input_size"] if "input_size" in model_config else 75
+        
+        logger.info(f"Создание модели: encoder={encoder_sizes}, decoder={decoder_sizes}, latent={latent_size_val}")
+        
         model = BidirectionalLSTMAutoencoder(
-            input_size=config["model"]["input_size"],
+            input_size=input_size_val,
             sequence_length=config["pose"]["sequence_length"],
-            encoder_hidden_sizes=[256, 128, 64],
-            decoder_hidden_sizes=[64, 128, 256, 75],
-            latent_size=64,
+            encoder_hidden_sizes=encoder_sizes,
+            decoder_hidden_sizes=decoder_sizes,
+            latent_size=latent_size_val,
             num_attention_heads=4,
-            dropout=0.2,
+            dropout=model_config.get("encoder_dropout", 0.2),
         ).to(device)
     else:
         raise ValueError(f"Модель {model_type} не поддерживается")
     
-
-    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    # Загружаем веса модели
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
     

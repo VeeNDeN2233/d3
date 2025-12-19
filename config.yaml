@@ -1,8 +1,10 @@
 # Конфигурация системы детекции аномалий движений младенцев
 
 # Пути к данным
+# Датасет MINI-RGBD должен лежать в одной папке с папкой проекта d3
+# Например: ../MINI-RGBD_web/ относительно папки d3
 data:
-  mini_rgbd_path: "MINI-RGBD_web"
+  mini_rgbd_path: "/app/data/MINI-RGBD_web"  # Путь в Docker контейнере (универсальный)
   rgb_subfolder: "rgb"
   
   # Разделение по последовательностям (БЕЗ УТЕЧКИ ДАННЫХ)
@@ -63,7 +65,7 @@ model:
 training:
   device: "cuda"  # ТОЛЬКО GPU
   batch_size: 16  # Уменьшено для тестирования
-  num_epochs: 10  # Уменьшено для быстрого теста
+  num_epochs: 50  # Количество эпох для обучения
   learning_rate: 0.001
   weight_decay: 0.0001
   

@@ -548,8 +548,29 @@ function displayResults(data) {
     
     // Отображаем видео
     const skeletonVideo = document.getElementById('skeleton-video');
+    const videoDownloadLink = document.getElementById('video-download-link');
     if (skeletonVideo && data.video_path) {
         skeletonVideo.src = data.video_path;
+        skeletonVideo.load(); // Явно загружаем видео
+        
+        // Добавляем ссылку для скачивания на случай, если видео не воспроизводится
+        if (videoDownloadLink) {
+            videoDownloadLink.href = data.video_path;
+        }
+        
+        // Обработка ошибок загрузки видео
+        skeletonVideo.addEventListener('error', function(e) {
+            console.error('Ошибка загрузки видео:', e);
+            const errorMsg = document.createElement('p');
+            errorMsg.style.color = 'red';
+            errorMsg.textContent = 'Не удалось загрузить видео. Попробуйте скачать результаты.';
+            skeletonVideo.parentNode.appendChild(errorMsg);
+        });
+        
+        // Обработка успешной загрузки
+        skeletonVideo.addEventListener('loadedmetadata', function() {
+            console.log('Видео метаданные загружены, продолжительность:', skeletonVideo.duration);
+        });
     }
     
     // Отображаем график

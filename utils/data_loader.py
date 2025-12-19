@@ -10,6 +10,15 @@ import numpy as np
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Совместимость с новым API MediaPipe 0.10.x
+try:
+    # Старый API (до 0.10.x)
+    mp_pose = mp.solutions.pose
+except AttributeError:
+    # Новый API (0.10.x+) - используем обратную совместимость
+    from mediapipe import solutions
+    mp_pose = solutions.pose
+
 
 class MiniRGBDDataLoader:
 
@@ -29,7 +38,10 @@ class MiniRGBDDataLoader:
         self.test_sequences = test_sequences
         
 
-        self.mp_pose = mp.solutions.pose
+        if not HAS_SOLUTIONS:
+            raise RuntimeError("MediaPipe solutions.pose API недоступен. Установите mediapipe<0.10.0")
+        
+        self.mp_pose = mp_pose
         self.pose = self.mp_pose.Pose(
             static_image_mode=True,
             model_complexity=model_complexity,
