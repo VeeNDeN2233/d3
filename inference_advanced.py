@@ -152,7 +152,7 @@ def process_video(
     
     if len(sequences) == 0:
         logger.warning("Нет валидных последовательностей")
-        return keypoints_list, [], []
+        return keypoints_list, [], [], np.array([])
     
 
     flattened_sequences = []
@@ -234,28 +234,42 @@ def generate_report(
     
 
     # Определяем риск на основе процента аномалий И максимальной ошибки
-    # Если процент аномалий высокий (>30%) или есть очень большие пики (>threshold*2)
-    if anomaly_rate > 30.0 or max_error > detector.threshold * 2.0:
+    # Логика: проверяем сначала максимальную ошибку (критические пики), затем процент аномалий
+    logger.info(f"Определение риска: anomaly_rate={anomaly_rate:.2f}%, max_error={max_error:.6f}, mean_error={mean_error:.6f}, threshold={detector.threshold:.6f}")
+    
+    if max_error > detector.threshold * 2.0 or anomaly_rate > 30.0:
         risk_level = "high"
         gma_assessment = "АНОМАЛЬНЫЕ общие движения"
         cp_risk = "ВЫСОКИЙ риск церебрального паралича"
-    elif anomaly_rate > 15.0 or max_error > detector.threshold * 1.5 or mean_error > detector.threshold:
+        logger.info(f"Высокий риск: max_error={max_error:.6f} > threshold*2={detector.threshold*2.0:.6f} или anomaly_rate={anomaly_rate:.2f}% > 30%")
+    elif max_error > detector.threshold * 1.5 or anomaly_rate > 15.0 or mean_error > detector.threshold:
         risk_level = "medium"
         gma_assessment = "ПОДОЗРИТЕЛЬНЫЕ общие движения"
         cp_risk = "УМЕРЕННЫЙ риск неврологических нарушений"
-    elif anomaly_rate > 5.0 or mean_error > detector.threshold * 0.8:
+        logger.info(f"Средний риск: max_error={max_error:.6f} > threshold*1.5={detector.threshold*1.5:.6f} или anomaly_rate={anomaly_rate:.2f}% > 15% или mean_error={mean_error:.6f} > threshold={detector.threshold:.6f}")
+    elif anomaly_rate > 5.0 or mean_error > detector.threshold * 0.8 or anomalous_count > 10:
         risk_level = "medium"
         gma_assessment = "ПОДОЗРИТЕЛЬНЫЕ общие движения (легкие отклонения)"
         cp_risk = "НИЗКИЙ-УМЕРЕННЫЙ риск"
+        logger.info(f"Средний риск (легкие отклонения): anomaly_rate={anomaly_rate:.2f}% > 5% или mean_error={mean_error:.6f} > threshold*0.8={detector.threshold*0.8:.6f} или anomalous_count={anomalous_count} > 10")
+    elif anomalous_count > 0:
+        risk_level = "medium"
+        gma_assessment = "ПОДОЗРИТЕЛЬНЫЕ общие движения (обнаружены отдельные аномалии)"
+        cp_risk = "НИЗКИЙ-УМЕРЕННЫЙ риск (требуется наблюдение)"
+        logger.info(f"Средний риск (отдельные аномалии): anomalous_count={anomalous_count} > 0")
     else:
         risk_level = "low"
         gma_assessment = "НОРМАЛЬНЫЕ общие движения"
         cp_risk = "НИЗКИЙ риск"
+        logger.info(f"Низкий риск: все метрики в норме")
     
 
 
 
     detailed_analysis = {}
+    logger.info(f"Проверка sequences_array для детального анализа: sequences_array is None={sequences_array is None}, "
+               f"len={len(sequences_array) if sequences_array is not None else 0}, shape={sequences_array.shape if sequences_array is not None and hasattr(sequences_array, 'shape') else 'N/A'}")
+    
     if sequences_array is not None and len(sequences_array) > 0:
         try:
             from utils.anomaly_analyzer import analyze_joint_errors
@@ -305,8 +319,10 @@ def generate_report(
                         if gma_assessment == "НОРМАЛЬНЫЕ общие движения":
                             gma_assessment = "ПОДОЗРИТЕЛЬНЫЕ общие движения (сниженная активность)"
         except Exception as e:
-            logger.warning(f"Ошибка детального анализа: {e}")
+            logger.error(f"Ошибка детального анализа: {e}", exc_info=True)
             detailed_analysis = {}
+    else:
+        logger.warning(f"Детальный анализ не выполнен: sequences_array is None или пустой (None={sequences_array is None}, len={len(sequences_array) if sequences_array is not None else 0})")
     
 
     detected_signs = []

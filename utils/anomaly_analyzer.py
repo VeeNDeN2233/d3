@@ -35,7 +35,8 @@ def analyze_joint_errors(
     analyze_all_sequences: bool = False,
 ) -> Dict:
     if len(sequences) == 0:
-        return {}
+        logger.warning("analyze_joint_errors: пустой массив sequences")
+        return {"has_anomalies": False, "message": "Нет последовательностей для анализа"}
     
 
     anomalous_mask = reconstruction_errors > threshold
