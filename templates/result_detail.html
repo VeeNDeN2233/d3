@@ -173,9 +173,9 @@
     <div class="result-media">
         <div class="media-item">
             <h3>Видео с наложенным скелетом</h3>
-            <video controls>
+            <video controls preload="metadata" style="width: 100%; max-width: 100%;">
                 <source src="/results/{{ result.output_dir }}/video_with_skeleton.mp4" type="video/mp4">
-                Ваш браузер не поддерживает видео.
+                Ваш браузер не поддерживает видео тег. <a href="/results/{{ result.output_dir }}/video_with_skeleton.mp4" download>Скачайте видео</a>
             </video>
         </div>
         

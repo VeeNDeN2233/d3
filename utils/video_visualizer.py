@@ -372,6 +372,7 @@ def create_skeleton_video_from_processed(
     logger.info(f"Видео с скелетом создано: {output_video_path} ({frame_idx} кадров, {file_size / 1024 / 1024:.2f} MB, кодек: {used_codec})")
     
     # Перекодируем в H.264 для лучшей совместимости с браузерами, если используется mp4v
+    logger.info(f"Проверка необходимости перекодирования: used_codec={repr(used_codec)}, сравнение с 'MPEG-4': {used_codec == 'MPEG-4'}")
     if used_codec == "MPEG-4":
         try:
             import subprocess
