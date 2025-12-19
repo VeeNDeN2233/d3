@@ -64,6 +64,8 @@ results/
 *.json
 !config.json
 !package.json
+# Исключение: нормальные статистики для анализа
+!checkpoints/normal_statistics.json
 
 # Logs
 *.log
@@ -74,6 +76,9 @@ tensorboard_logs/
 checkpoints/*.pt
 checkpoints/*.pth
 !checkpoints/.gitkeep
+# Исключения: итоговые модели для работы приложения
+!checkpoints/best_model_advanced.pt
+!checkpoints/anomaly_detector_advanced.pt
 
 # Temporary files
 *.tmp
